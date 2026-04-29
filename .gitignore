@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+
+# Data (optional: 필요하면 유지)
+data/
+
+# Models
+*.pt
+
+# Logs
+*.log
