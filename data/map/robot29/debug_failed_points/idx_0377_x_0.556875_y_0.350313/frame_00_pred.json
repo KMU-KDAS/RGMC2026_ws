@@ -1,0 +1,24 @@
+{
+  "idx": 377,
+  "x": 0.556875,
+  "y": 0.3503125,
+  "frame": 0,
+  "prev_failed_reason": "valid_frames=2<3",
+  "pred_summary": {
+    "ok": false,
+    "center_uv": null,
+    "mask_exists": false,
+    "mask_shape": null,
+    "mask_area_px": null,
+    "reason_guess": "mask_missing_or_detection_failed",
+    "raw_keys": [
+      "ok",
+      "center_uv",
+      "mask",
+      "contour",
+      "score",
+      "bbox_xyxy"
+    ]
+  },
+  "pred_raw": "{'ok': False, 'center_uv': None, 'mask': None, 'contour': None, 'score': None, 'bbox_xyxy': None}"
+}

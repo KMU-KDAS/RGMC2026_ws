@@ -1,0 +1,64 @@
+{
+  "idx": 715,
+  "x": 0.296875,
+  "y": 0.65625,
+  "z": null,
+  "frames": [
+    {
+      "frame_idx": 0,
+      "timestamp": 1776278136.9783075,
+      "ok": true,
+      "center_uv": [
+        263.0016680567139,
+        169.97831526271892
+      ],
+      "confidence": 0.0,
+      "metadata": {}
+    },
+    {
+      "frame_idx": 1,
+      "timestamp": 1776278138.6532292,
+      "ok": true,
+      "center_uv": [
+        263.1477749790092,
+        170.04366078925273
+      ],
+      "confidence": 0.0,
+      "metadata": {}
+    },
+    {
+      "frame_idx": 2,
+      "timestamp": 1776278140.3582854,
+      "ok": true,
+      "center_uv": [
+        263.0407993338884,
+        170.1640299750208
+      ],
+      "confidence": 0.0,
+      "metadata": {}
+    },
+    {
+      "frame_idx": 3,
+      "timestamp": 1776278142.0478802,
+      "ok": true,
+      "center_uv": [
+        263.0491666666667,
+        170.1775
+      ],
+      "confidence": 0.0,
+      "metadata": {}
+    },
+    {
+      "frame_idx": 4,
+      "timestamp": 1776278143.694008,
+      "ok": true,
+      "center_uv": [
+        263.0491666666667,
+        170.1775
+      ],
+      "confidence": 0.0,
+      "metadata": {}
+    }
+  ],
+  "collected_at": "2026-04-16T03:35:44.657984"
+}

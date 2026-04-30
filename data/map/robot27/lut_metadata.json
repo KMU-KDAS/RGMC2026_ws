@@ -1,0 +1,16 @@
+{
+  "method": "clough_tocher",
+  "num_points": 1080,
+  "workspace_bounds": {
+    "x_min": 0.08,
+    "x_max": 1.0,
+    "y_min": 0.0,
+    "y_max": 1.0
+  },
+  "pixel_bounds": {
+    "u_min": 112.52733686067019,
+    "u_max": 568.4200336700337,
+    "v_min": 19.71824686940966,
+    "v_max": 437.5013192612137
+  }
+}

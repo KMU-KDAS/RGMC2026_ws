@@ -1,0 +1,16 @@
+{
+  "idx": 809,
+  "x": 0.5453125,
+  "y": 0.755,
+  "prev_failed_reason": "valid_frames=0<3",
+  "n_frames": 10,
+  "n_ok_true": 7,
+  "n_ok_false": 3,
+  "n_mask_exists": 7,
+  "n_center_exists": 7,
+  "reason_guess_counts": {
+    "detected": 7,
+    "mask_missing_or_detection_failed": 3
+  },
+  "error_count": 0
+}

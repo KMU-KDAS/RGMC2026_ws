@@ -1,0 +1,15 @@
+{
+  "idx": 410,
+  "x": 0.433125,
+  "y": 0.38125,
+  "prev_failed_reason": "valid_frames=0<3",
+  "n_frames": 10,
+  "n_ok_true": 10,
+  "n_ok_false": 0,
+  "n_mask_exists": 10,
+  "n_center_exists": 10,
+  "reason_guess_counts": {
+    "detected": 10
+  },
+  "error_count": 0
+}
