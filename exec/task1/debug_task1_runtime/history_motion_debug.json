@@ -3,99 +3,99 @@
     "step": 0,
     "shape_type": "square",
     "current_pose": [
-      0.3888064818629531,
-      0.31708245248439293,
-      -0.4360048770904541
+      0.2311151823216836,
+      0.5524775600420185,
+      0.0822879895567894
     ],
     "target_pose": [
-      0.47068336651277515,
-      0.5792911702625698,
-      -0.7343477010726929
+      0.6993522251498598,
+      0.6953972326528555,
+      -0.7853981852531433
     ],
     "robot_xy": [
-      0.7801428571428571,
-      0.4692142857142857
+      0.0040000000000000166,
+      0.8920714285714285
     ],
     "robot_xy_after": [
-      0.3750714285714286,
-      0.2874285714285714
+      0.29842857142857143,
+      0.5578571428571428
     ],
     "official_iou_before": 0.0,
-    "official_iou_after": 0.2,
+    "official_iou_after": 0.1,
     "belief_before": "CASE_0",
     "belief_after": "CASE_0",
     "belief_update_ok": true,
     "belief_update_error": null,
     "predicted_next_pose": [
-      0.43343586546261326,
-      0.4128723503090844,
-      -0.43600487709045066
+      0.4116616050393126,
+      0.5673679866182983,
+      0.08228798955681443
     ],
     "observed_pose_after": [
-      0.4598463109770798,
-      0.4384675742151482,
-      -0.5191461443901062
+      0.470512332524797,
+      0.5857726848933827,
+      0.15342392027378082
     ],
     "pred_disp_xy": [
-      0.04462938359966018,
-      0.0957898978246915
+      0.180546422717629,
+      0.014890426576279814
     ],
     "obs_disp_xy": [
-      0.0710398291141267,
-      0.12138512173075527
+      0.23939715020311342,
+      0.03329512485136421
     ],
-    "pred_along": 0.1056763285024156,
-    "obs_along": 0.1400307183465141,
-    "along_ratio": 1.325090683324726,
-    "along_err": 0.0343543898440985,
-    "pred_lateral": 1.3877787807814457e-17,
-    "obs_lateral": 0.013130232957333496,
-    "lateral_err": 0.013130232957333482,
-    "dtheta_obs": -0.0831412672996521,
-    "dx_err": 0.02641044551446653,
-    "dy_err": 0.02559522390606378,
-    "dtheta_err": -0.08314126729965554,
-    "pos_err_norm": 0.036778079328237685,
+    "pred_along": 0.1811594202898551,
+    "obs_along": 0.24132378884832717,
+    "along_ratio": 1.3321073144427658,
+    "along_err": 0.06016436855847207,
+    "pred_lateral": 1.5004104601929408e-16,
+    "obs_lateral": 0.01350517678995682,
+    "lateral_err": 0.01350517678995667,
+    "dtheta_obs": 0.07113593071699142,
+    "dx_err": 0.05885072748548442,
+    "dy_err": 0.018404698275084397,
+    "dtheta_err": 0.07113593071696639,
+    "pos_err_norm": 0.06166150374559192,
     "plan_summary": {
       "candidate_index": 0,
-      "face_idx": 2,
+      "face_idx": 1,
       "ratio": 0.5,
       "action_type": "normal",
-      "stroke_len": 0.13999999999999999,
+      "stroke_len": 0.24,
       "start": [
-        0.32855528385311705,
-        0.18776280619599128
+        0.08893126350309641,
+        0.5407510513046667
       ],
       "end": [
-        0.3876802912459468,
-        0.3146652628341424
+        0.32811916431941124,
+        0.560477888432922
       ],
       "n_hat": [
-        -0.42232148137735526,
-        -0.9064461188439367
+        -0.996616253401312,
+        -0.08219515470106356
       ],
       "t_hat": [
-        0.9064461188439367,
-        -0.42232148137735526
+        0.08219515470106356,
+        -0.996616253401312
       ],
-      "approach_path_len": 4,
+      "approach_path_len": 2,
       "retreat_xy": [
-        0.3750106468046261,
-        0.28747187926882434
+        0.2982206767173719,
+        0.5580120337918901
       ],
       "next_pose": [
-        0.43343586546261326,
-        0.4128723503090844,
-        -0.43600487709045066
+        0.4116616050393126,
+        0.5673679866182983,
+        0.08228798955681443
       ]
     },
     "execute_ok": true,
     "attach_fail_count": 0,
     "num_feasible": 16,
     "vote_box": {
-      "CASE_0": 2,
+      "CASE_0": 0,
       "CASE_1_A": 0,
-      "CASE_1_B": 0,
+      "CASE_1_B": 1,
       "CASE_1_C": 0,
       "CASE_2_AB": 0,
       "CASE_2_AC": 0,
@@ -110,20 +110,20 @@
         "type": "polygon",
         "points": [
           {
-            "x": 297.0,
-            "y": 161.0
+            "x": 264.0,
+            "y": 381.0
           },
           {
-            "x": 362.0,
-            "y": 233.0
+            "x": 195.0,
+            "y": 312.0
           },
           {
-            "x": 290.0,
-            "y": 298.0
+            "x": 264.0,
+            "y": 243.0
           },
           {
-            "x": 225.0,
-            "y": 226.0
+            "x": 333.0,
+            "y": 312.0
           }
         ]
       }
@@ -135,19 +135,19 @@
         "type": "polygon",
         "points": [
           {
-            "x": 432.0,
-            "y": 129.0
+            "x": 257.0,
+            "y": 73.0
           },
           {
-            "x": 473.0,
-            "y": 218.0
+            "x": 354.0,
+            "y": 81.0
           },
           {
-            "x": 385.0,
-            "y": 258.0
+            "x": 347.0,
+            "y": 178.0
           },
           {
-            "x": 344.0,
+            "x": 249.0,
             "y": 170.0
           }
         ]
@@ -155,8 +155,8 @@
     },
     "eval_status_before": {
       "status": "running",
-      "time_elapsed": 6.8,
-      "time_remaining": 173.2,
+      "time_elapsed": 11.5,
+      "time_remaining": 168.5,
       "current_iou": 0.0
     },
     "eval_object_after": {
@@ -166,20 +166,20 @@
         "type": "polygon",
         "points": [
           {
-            "x": 422.0,
-            "y": 242.0
+            "x": 250.0,
+            "y": 174.0
           },
           {
-            "x": 336.0,
-            "y": 290.0
+            "x": 347.0,
+            "y": 189.0
           },
           {
-            "x": 289.0,
-            "y": 206.0
+            "x": 331.0,
+            "y": 286.0
           },
           {
-            "x": 373.0,
-            "y": 158.0
+            "x": 235.0,
+            "y": 270.0
           }
         ]
       }
@@ -188,116 +188,116 @@
       "status": "running",
       "time_elapsed": 27.4,
       "time_remaining": 152.6,
-      "current_iou": 0.2
+      "current_iou": 0.1
     },
-    "state_ts": 1778148954.7713914,
+    "state_ts": 1778152697.9833837,
     "stop_reason": null,
-    "step_wall_start": 2834.789109464,
-    "step_wall_end_before_next_step": 2860.558590427,
-    "step_total_time_sec": 25.769480963000206,
-    "total_time_sec": 25.769480963000206,
-    "time_eval_before_sec": 3.735199859000204,
-    "time_object_pose_sec": 0.00034342499975537066,
-    "time_get_stable_robot_state_sec": 3.9282790570000543,
-    "time_debug_vis_before_sec": 0.19276850999995077,
-    "time_generate_candidate_bundle_sec": 2.0720764160000726,
-    "time_select_best_plan_sec": 0.0004989369999748305,
-    "time_debug_vis_planned_sec": 0.21414133100006438,
-    "time_execute_push_sec": 7.8084574869999415,
-    "time_sleep_after_push_sec": 1.0002950870002678,
-    "time_eval_after_sec": 5.347825960999671,
-    "time_get_state_after_sec": 1.1966679120000663,
-    "time_postprocess_prediction_error_sec": 0.0003948379999201279,
-    "time_profile_total_sec": 25.76948329600009
+    "step_wall_start": 6575.88520026,
+    "step_wall_end_before_next_step": 6599.023502071,
+    "step_total_time_sec": 23.13830181100002,
+    "total_time_sec": 23.13830181100002,
+    "time_eval_before_sec": 5.5145684460003395,
+    "time_object_pose_sec": 0.00038281199977063807,
+    "time_get_stable_robot_state_sec": 4.22197025100013,
+    "time_debug_vis_before_sec": 0.2172450480002226,
+    "time_generate_candidate_bundle_sec": 0.8285003359997063,
+    "time_select_best_plan_sec": 0.0002658729999893694,
+    "time_debug_vis_planned_sec": 0.17660463199990772,
+    "time_execute_push_sec": 6.17197832400052,
+    "time_sleep_after_push_sec": 1.000360062999789,
+    "time_eval_after_sec": 3.251697005999631,
+    "time_get_state_after_sec": 1.4333156450002207,
+    "time_postprocess_prediction_error_sec": 0.0005207280000831815,
+    "time_profile_total_sec": 23.138304824000443
   },
   {
     "step": 1,
     "shape_type": "square",
     "current_pose": [
-      0.4598463109770798,
-      0.4384675742151482,
-      -0.5191461443901062
+      0.47224477621879996,
+      0.5858489407087051,
+      0.15499673783779144
     ],
     "target_pose": [
-      0.47068336651277515,
-      0.5792911702625698,
-      -0.7343477010726929
+      0.6993522251498598,
+      0.6953972326528555,
+      -0.7853981852531433
     ],
     "robot_xy": [
-      0.3750714285714286,
-      0.2874285714285714
+      0.29842857142857143,
+      0.5578571428571428
     ],
     "robot_xy_after": [
-      0.45021428571428573,
-      0.40635714285714286
+      0.4336428571428571,
+      0.6220714285714286
     ],
-    "official_iou_before": 0.2,
-    "official_iou_after": 0.7,
+    "official_iou_before": 0.1,
+    "official_iou_after": 0.6,
     "belief_before": "CASE_0",
     "belief_after": "CASE_0",
     "belief_update_ok": true,
     "belief_update_error": null,
     "predicted_next_pose": [
-      0.4893382686938025,
-      0.5433278561914279,
-      -0.4084005303550182
+      0.5717600660825806,
+      0.6334857674879489,
+      -0.5489506305832625
     ],
     "observed_pose_after": [
-      0.5087637180846624,
-      0.5764821865742622,
-      -0.4590393304824829
+      0.6167090739082498,
+      0.6199573039859737,
+      0.03060268796980381
     ],
     "pred_disp_xy": [
-      0.029491957716722694,
-      0.10486028197627967
+      0.09951528986378061,
+      0.04763682677924386
     ],
     "obs_disp_xy": [
-      0.04891740710758258,
-      0.138014612359114
+      0.14446429768944985,
+      0.03410836327726863
     ],
-    "pred_along": 0.10892866613573235,
-    "obs_along": 0.14610406824426836,
-    "along_ratio": 1.3412820832875434,
-    "along_err": 0.03717540210853601,
-    "pred_lateral": 1.734723475976807e-17,
-    "obs_lateral": 0.009723537691583553,
-    "lateral_err": 0.009723537691583536,
-    "dtheta_obs": 0.060106813907623284,
-    "dx_err": 0.019425449390859884,
-    "dy_err": 0.03315433038283433,
-    "dtheta_err": -0.05063880012746469,
-    "pos_err_norm": 0.03842600300800215,
+    "pred_along": 0.11032932603015375,
+    "obs_along": 0.1450314365948598,
+    "along_ratio": 1.3145320633538697,
+    "along_err": 0.03470211056470607,
+    "pred_lateral": 1.4304896245381993e-16,
+    "obs_lateral": 0.03161006408711119,
+    "lateral_err": 0.03161006408711104,
+    "dtheta_obs": -0.12439404986798763,
+    "dx_err": 0.04494900782566924,
+    "dy_err": -0.01352846350197523,
+    "dtheta_err": 0.5795533185530664,
+    "pos_err_norm": 0.046940735286490246,
     "plan_summary": {
-      "candidate_index": 8,
-      "face_idx": 2,
-      "ratio": 0.7,
+      "candidate_index": 2,
+      "face_idx": 1,
+      "ratio": 0.5,
       "action_type": "spin_neg",
-      "stroke_len": 0.14430869689661813,
+      "stroke_len": 0.14616429112474774,
       "start": [
-        0.42587732729627314,
-        0.2935619293096758
+        0.331288392646981,
+        0.563824506365639
       ],
       "end": [
-        0.46494827287938734,
-        0.432480830871851
+        0.46312624865851754,
+        0.6269337744827814
       ],
       "n_hat": [
-        -0.49613896452879314,
-        -0.8682431271690534
+        -0.9880120343819085,
+        -0.15437687623644464
       ],
       "t_hat": [
-        0.8682431271690534,
-        -0.49613896452879314
+        0.15437687623644464,
+        -0.9880120343819085
       ],
-      "approach_path_len": 3,
+      "approach_path_len": 2,
       "retreat_xy": [
-        0.45006410394352353,
-        0.4064335370567794
+        0.4334858876270603,
+        0.6223024681956881
       ],
       "next_pose": [
-        0.4893382686938025,
-        0.5433278561914279,
-        -0.4084005303550182
+        0.5717600660825806,
+        0.6334857674879489,
+        -0.5489506305832625
       ]
     },
     "execute_ok": true,
@@ -306,10 +306,10 @@
     "vote_box": {
       "CASE_0": 0,
       "CASE_1_A": 0,
-      "CASE_1_B": 0,
+      "CASE_1_B": 1,
       "CASE_1_C": 0,
       "CASE_2_AB": 0,
-      "CASE_2_AC": 1,
+      "CASE_2_AC": 0,
       "CASE_2_BC": 0,
       "CASE_3_ALL": 0
     },
@@ -321,20 +321,20 @@
         "type": "polygon",
         "points": [
           {
-            "x": 297.0,
-            "y": 161.0
+            "x": 264.0,
+            "y": 381.0
           },
           {
-            "x": 362.0,
-            "y": 233.0
+            "x": 195.0,
+            "y": 312.0
           },
           {
-            "x": 290.0,
-            "y": 298.0
+            "x": 264.0,
+            "y": 243.0
           },
           {
-            "x": 225.0,
-            "y": 226.0
+            "x": 333.0,
+            "y": 312.0
           }
         ]
       }
@@ -346,29 +346,29 @@
         "type": "polygon",
         "points": [
           {
-            "x": 422.0,
-            "y": 242.0
+            "x": 250.0,
+            "y": 175.0
           },
           {
-            "x": 336.0,
-            "y": 290.0
+            "x": 346.0,
+            "y": 190.0
           },
           {
-            "x": 289.0,
-            "y": 206.0
+            "x": 332.0,
+            "y": 286.0
           },
           {
-            "x": 373.0,
-            "y": 158.0
+            "x": 235.0,
+            "y": 271.0
           }
         ]
       }
     },
     "eval_status_before": {
       "status": "running",
-      "time_elapsed": 35.7,
-      "time_remaining": 144.3,
-      "current_iou": 0.2
+      "time_elapsed": 33.1,
+      "time_remaining": 146.9,
+      "current_iou": 0.1
     },
     "eval_object_after": {
       "object": "square",
@@ -377,150 +377,361 @@
         "type": "polygon",
         "points": [
           {
-            "x": 360.0,
-            "y": 268.0
-          },
-          {
-            "x": 273.0,
-            "y": 311.0
-          },
-          {
             "x": 231.0,
-            "y": 223.0
+            "y": 243.0
           },
           {
-            "x": 318.0,
-            "y": 180.0
+            "x": 329.0,
+            "y": 246.0
+          },
+          {
+            "x": 326.0,
+            "y": 343.0
+          },
+          {
+            "x": 228.0,
+            "y": 340.0
           }
         ]
       }
     },
     "eval_status_after": {
       "status": "running",
-      "time_elapsed": 52.3,
-      "time_remaining": 127.7,
-      "current_iou": 0.7
+      "time_elapsed": 50.2,
+      "time_remaining": 129.8,
+      "current_iou": 0.6
     },
-    "state_ts": 1778148983.9637935,
+    "state_ts": 1778152718.7963276,
     "stop_reason": null,
-    "step_wall_start": 2860.558672243,
-    "step_wall_end_before_next_step": 2885.129956402,
-    "step_total_time_sec": 24.571284159000243,
-    "total_time_sec": 24.571284159000243,
-    "time_eval_before_sec": 6.882841920999908,
-    "time_object_pose_sec": 0.0007718709998698614,
-    "time_get_stable_robot_state_sec": 4.193619129000126,
-    "time_debug_vis_before_sec": 0.16016900700014958,
-    "time_generate_candidate_bundle_sec": 0.2801876219996302,
-    "time_select_best_plan_sec": 0.00031967500035534613,
-    "time_debug_vis_planned_sec": 0.17110041599971737,
-    "time_execute_push_sec": 6.604470499999934,
-    "time_sleep_after_push_sec": 1.0001385580003443,
-    "time_eval_after_sec": 4.177566326000033,
-    "time_get_state_after_sec": 0.9214874809999856,
-    "time_postprocess_prediction_error_sec": 0.00023772999975335551,
-    "time_profile_total_sec": 24.571286318999682
+    "step_wall_start": 6599.023615339,
+    "step_wall_end_before_next_step": 6621.509415173,
+    "step_total_time_sec": 22.485799834000318,
+    "total_time_sec": 22.485799834000318,
+    "time_eval_before_sec": 3.9810464229994977,
+    "time_object_pose_sec": 0.0012067620000379975,
+    "time_get_stable_robot_state_sec": 3.4799899420004294,
+    "time_debug_vis_before_sec": 0.24263761899965175,
+    "time_generate_candidate_bundle_sec": 0.08156466099990212,
+    "time_select_best_plan_sec": 0.00017809500059229322,
+    "time_debug_vis_planned_sec": 0.16906483699949604,
+    "time_execute_push_sec": 7.950566520000393,
+    "time_sleep_after_push_sec": 1.0001687470003162,
+    "time_eval_after_sec": 4.1766855879996,
+    "time_get_state_after_sec": 1.2352582350004013,
+    "time_postprocess_prediction_error_sec": 0.0002255749996038503,
+    "time_profile_total_sec": 22.485801914999684
   },
   {
     "step": 2,
     "shape_type": "square",
     "current_pose": [
-      0.508797837628106,
-      0.5753927841333051,
-      -0.44530102610588074
+      0.6166481810847688,
+      0.6193659688221407,
+      0.05150080844759941
     ],
     "target_pose": [
-      0.47068336651277515,
-      0.5792911702625698,
-      -0.7343477010726929
+      0.6993522251498598,
+      0.6953972326528555,
+      -0.7853981852531433
     ],
     "robot_xy": [
-      0.45021428571428573,
-      0.40635714285714286
+      0.4336428571428571,
+      0.6220714285714286
     ],
     "robot_xy_after": [
-      0.644357142857143,
-      0.5049285714285714
+      0.5819285714285715,
+      0.6593571428571429
     ],
-    "official_iou_before": 0.7,
+    "official_iou_before": 0.5,
+    "official_iou_after": 0.3,
+    "belief_before": "CASE_0",
+    "belief_after": "CASE_0",
+    "belief_update_ok": true,
+    "belief_update_error": null,
+    "predicted_next_pose": [
+      0.7205523928931388,
+      0.6564668441588406,
+      -0.6524465599734546
+    ],
+    "observed_pose_after": [
+      0.770836253932385,
+      0.6451491150731395,
+      -0.020615635439753532
+    ],
+    "pred_disp_xy": [
+      0.10390421180836995,
+      0.03710087533669992
+    ],
+    "obs_disp_xy": [
+      0.15418807284761615,
+      0.025783146250998867
+    ],
+    "pred_along": 0.1103293260301537,
+    "obs_along": 0.15387901009826946,
+    "along_ratio": 1.394724463885634,
+    "along_err": 0.043549684068115754,
+    "pred_lateral": 2.6703474716024767e-16,
+    "obs_lateral": 0.027567783556877855,
+    "lateral_err": 0.027567783556877588,
+    "dtheta_obs": -0.07211644388735296,
+    "dx_err": 0.0502838610392462,
+    "dy_err": -0.011317729085701056,
+    "dtheta_err": 0.631830924533701,
+    "pos_err_norm": 0.0515418050971398,
+    "plan_summary": {
+      "candidate_index": 2,
+      "face_idx": 1,
+      "ratio": 0.5,
+      "action_type": "spin_neg",
+      "stroke_len": 0.14616429112474766,
+      "start": [
+        0.4741706723767086,
+        0.6120217677000019
+      ],
+      "end": [
+        0.611822972180437,
+        0.6611730073460623
+      ],
+      "n_hat": [
+        -0.9986741264583655,
+        -0.05147804524863603
+      ],
+      "t_hat": [
+        0.05147804524863603,
+        -0.9986741264583655
+      ],
+      "approach_path_len": 2,
+      "retreat_xy": [
+        0.5818627483866861,
+        0.6596286659886033
+      ],
+      "next_pose": [
+        0.7205523928931388,
+        0.6564668441588406,
+        -0.6524465599734546
+      ]
+    },
+    "execute_ok": true,
+    "attach_fail_count": 0,
+    "num_feasible": 16,
+    "vote_box": {
+      "CASE_0": 0,
+      "CASE_1_A": 0,
+      "CASE_1_B": 1,
+      "CASE_1_C": 0,
+      "CASE_2_AB": 0,
+      "CASE_2_AC": 0,
+      "CASE_2_BC": 0,
+      "CASE_3_ALL": 0
+    },
+    "eval_target": {
+      "task": "planar_pushing",
+      "target_object": "square",
+      "coordinate_space": "undistorted_pixel_2d",
+      "geometry": {
+        "type": "polygon",
+        "points": [
+          {
+            "x": 264.0,
+            "y": 381.0
+          },
+          {
+            "x": 195.0,
+            "y": 312.0
+          },
+          {
+            "x": 264.0,
+            "y": 243.0
+          },
+          {
+            "x": 333.0,
+            "y": 312.0
+          }
+        ]
+      }
+    },
+    "eval_object_before": {
+      "object": "square",
+      "coordinate_space": "undistorted_pixel_2d",
+      "geometry": {
+        "type": "polygon",
+        "points": [
+          {
+            "x": 233.0,
+            "y": 242.0
+          },
+          {
+            "x": 330.0,
+            "y": 247.0
+          },
+          {
+            "x": 325.0,
+            "y": 344.0
+          },
+          {
+            "x": 227.0,
+            "y": 339.0
+          }
+        ]
+      }
+    },
+    "eval_status_before": {
+      "status": "running",
+      "time_elapsed": 55.6,
+      "time_remaining": 124.4,
+      "current_iou": 0.5
+    },
+    "eval_object_after": {
+      "object": "square",
+      "coordinate_space": "undistorted_pixel_2d",
+      "geometry": {
+        "type": "polygon",
+        "points": [
+          {
+            "x": 317.0,
+            "y": 311.0
+          },
+          {
+            "x": 319.0,
+            "y": 409.0
+          },
+          {
+            "x": 222.0,
+            "y": 411.0
+          },
+          {
+            "x": 220.0,
+            "y": 313.0
+          }
+        ]
+      }
+    },
+    "eval_status_after": {
+      "status": "running",
+      "time_elapsed": 69.5,
+      "time_remaining": 110.5,
+      "current_iou": 0.3
+    },
+    "state_ts": 1778152741.9649172,
+    "stop_reason": null,
+    "step_wall_start": 6621.509477099,
+    "step_wall_end_before_next_step": 6640.543724423,
+    "step_total_time_sec": 19.034247323999807,
+    "total_time_sec": 19.034247323999807,
+    "time_eval_before_sec": 4.022214560000066,
+    "time_object_pose_sec": 0.0004551130004983861,
+    "time_get_stable_robot_state_sec": 4.099927985999784,
+    "time_debug_vis_before_sec": 0.1956613969996397,
+    "time_generate_candidate_bundle_sec": 0.30859103100010543,
+    "time_select_best_plan_sec": 0.0004299530000935192,
+    "time_debug_vis_planned_sec": 0.1736909929995818,
+    "time_execute_push_sec": 5.610582406000503,
+    "time_sleep_after_push_sec": 1.0002922679996118,
+    "time_eval_after_sec": 2.5421263270000054,
+    "time_get_state_after_sec": 0.9151801900006831,
+    "time_postprocess_prediction_error_sec": 0.00022798699956183555,
+    "time_profile_total_sec": 19.034247139999934
+  },
+  {
+    "step": 3,
+    "shape_type": "square",
+    "current_pose": [
+      0.770836253932385,
+      0.6451491150731395,
+      -0.020615635439753532
+    ],
+    "target_pose": [
+      0.6993522251498598,
+      0.6953972326528555,
+      -0.7853981852531433
+    ],
+    "robot_xy": [
+      0.5819285714285715,
+      0.6593571428571429
+    ],
+    "robot_xy_after": [
+      0.8023571428571429,
+      0.5912857142857143
+    ],
+    "official_iou_before": 0.3,
     "official_iou_after": 0.8,
     "belief_before": "CASE_0",
     "belief_after": "CASE_0",
     "belief_update_ok": true,
     "belief_update_error": null,
     "predicted_next_pose": [
-      0.49354778572616415,
-      0.5784892410899248,
-      -0.529104284251244
+      0.6651823810882334,
+      0.6473275454214159,
+      -0.8923261617555416
     ],
     "observed_pose_after": [
-      0.49132246706513244,
-      0.5868582944565651,
-      -0.46823474764823914
+      0.6517328171484617,
+      0.669411469534678,
+      -0.5651494264602661
     ],
     "pred_disp_xy": [
-      -0.015250051901941897,
-      0.003096456956619753
+      -0.10565387284415162,
+      0.002178430348276361
     ],
     "obs_disp_xy": [
-      -0.017475370562973602,
-      0.011465510323260042
+      -0.11910343678392332,
+      0.02426235446153846
     ],
-    "pred_along": 0.01556123801939038,
-    "obs_along": 0.019407374073730676,
-    "along_ratio": 1.2471613151567853,
-    "along_err": 0.003846136054340296,
-    "pred_lateral": 4.142503679062226e-17,
-    "obs_lateral": 0.007758887474909879,
-    "lateral_err": 0.007758887474909837,
-    "dtheta_obs": -0.0229337215423584,
-    "dx_err": -0.0022253186610317055,
-    "dy_err": 0.008369053366640289,
-    "dtheta_err": 0.06086953660300487,
-    "pos_err_norm": 0.008659855506693463,
+    "pred_along": 0.10567632850241555,
+    "obs_along": 0.11957827636168199,
+    "along_ratio": 1.1315521465996867,
+    "along_err": 0.013901947859266434,
+    "pred_lateral": 1.2672983144022044e-16,
+    "obs_lateral": 0.02180197972956949,
+    "lateral_err": 0.021801979729569362,
+    "dtheta_obs": -0.5445337910205126,
+    "dx_err": -0.013449563939771703,
+    "dy_err": 0.0220839241132621,
+    "dtheta_err": 0.3271767352952755,
+    "pos_err_norm": 0.025857116513840567,
     "plan_summary": {
-      "candidate_index": 2,
+      "candidate_index": 6,
       "face_idx": 3,
-      "ratio": 0.5,
-      "action_type": "spin_neg",
-      "stroke_len": 0.020615528128088315,
+      "ratio": 0.25,
+      "action_type": "normal",
+      "stroke_len": 0.13999999999999999,
       "start": [
-        0.6375518001112831,
-        0.5139420321227851
+        0.9123800534058726,
+        0.5892194216322945
       ],
       "end": [
-        0.6173485313515905,
-        0.5180442182989149
+        0.7724098026619407,
+        0.5921054061576911
       ],
       "n_hat": [
-        0.9024810454428296,
-        -0.4307295701671961
+        0.9997875053137993,
+        -0.020614175181405063
       ],
       "t_hat": [
-        0.4307295701671961,
-        0.9024810454428296
+        0.020614175181405063,
+        0.9997875053137993
       ],
       "approach_path_len": 4,
       "retreat_xy": [
-        0.6444229627148754,
-        0.505122331193899
+        0.8024034278213547,
+        0.5914869809022489
       ],
       "next_pose": [
-        0.49354778572616415,
-        0.5784892410899248,
-        -0.529104284251244
+        0.6651823810882334,
+        0.6473275454214159,
+        -0.8923261617555416
       ]
     },
     "execute_ok": true,
-    "attach_fail_count": 2,
-    "num_feasible": 14,
+    "attach_fail_count": 0,
+    "num_feasible": 16,
     "vote_box": {
       "CASE_0": 0,
       "CASE_1_A": 0,
-      "CASE_1_B": 0,
+      "CASE_1_B": 1,
       "CASE_1_C": 0,
       "CASE_2_AB": 0,
-      "CASE_2_AC": 1,
+      "CASE_2_AC": 0,
       "CASE_2_BC": 0,
       "CASE_3_ALL": 0
     },
@@ -532,20 +743,20 @@
         "type": "polygon",
         "points": [
           {
-            "x": 297.0,
-            "y": 161.0
+            "x": 264.0,
+            "y": 381.0
           },
           {
-            "x": 362.0,
-            "y": 233.0
+            "x": 195.0,
+            "y": 312.0
           },
           {
-            "x": 290.0,
-            "y": 298.0
+            "x": 264.0,
+            "y": 243.0
           },
           {
-            "x": 225.0,
-            "y": 226.0
+            "x": 333.0,
+            "y": 312.0
           }
         ]
       }
@@ -557,29 +768,29 @@
         "type": "polygon",
         "points": [
           {
-            "x": 361.0,
-            "y": 268.0
-          },
-          {
-            "x": 273.0,
-            "y": 310.0
-          },
-          {
-            "x": 231.0,
-            "y": 223.0
+            "x": 317.0,
+            "y": 311.0
           },
           {
             "x": 319.0,
-            "y": 181.0
+            "y": 409.0
+          },
+          {
+            "x": 222.0,
+            "y": 411.0
+          },
+          {
+            "x": 220.0,
+            "y": 313.0
           }
         ]
       }
     },
     "eval_status_before": {
       "status": "running",
-      "time_elapsed": 57.6,
-      "time_remaining": 122.4,
-      "current_iou": 0.7
+      "time_elapsed": 75.9,
+      "time_remaining": 104.1,
+      "current_iou": 0.3
     },
     "eval_object_after": {
       "object": "square",
@@ -588,48 +799,48 @@
         "type": "polygon",
         "points": [
           {
-            "x": 356.0,
-            "y": 259.0
+            "x": 325.0,
+            "y": 324.0
           },
           {
-            "x": 269.0,
-            "y": 304.0
+            "x": 241.0,
+            "y": 376.0
           },
           {
-            "x": 225.0,
-            "y": 217.0
+            "x": 191.0,
+            "y": 294.0
           },
           {
-            "x": 312.0,
-            "y": 173.0
+            "x": 273.0,
+            "y": 242.0
           }
         ]
       }
     },
     "eval_status_after": {
       "status": "running",
-      "time_elapsed": 72.6,
-      "time_remaining": 107.4,
+      "time_elapsed": 94.1,
+      "time_remaining": 85.9,
       "current_iou": 0.8
     },
-    "state_ts": 1778149004.8374777,
-    "stop_reason": "official_iou_after",
-    "step_wall_start": 2885.130043247,
-    "step_wall_end_before_next_step": 2905.399181079,
-    "step_total_time_sec": 20.26913783200007,
-    "total_time_sec": 20.26913783200007,
-    "time_eval_before_sec": 4.225808740000048,
-    "time_object_pose_sec": 0.0007266309999067744,
-    "time_get_stable_robot_state_sec": 3.171698314999958,
-    "time_debug_vis_before_sec": 0.1706522889999178,
-    "time_generate_candidate_bundle_sec": 0.602067444000113,
-    "time_select_best_plan_sec": 0.0003050049999728799,
-    "time_debug_vis_planned_sec": 0.16667078599994056,
-    "time_execute_push_sec": 6.790048577000107,
-    "time_sleep_after_push_sec": 1.0001687280000624,
-    "time_eval_after_sec": 3.051532558999952,
-    "time_get_state_after_sec": 0.9250334329999532,
-    "time_postprocess_prediction_error_sec": 0.00022933499985811068,
-    "time_profile_total_sec": 20.26913856300007
+    "state_ts": 1778152761.6291122,
+    "stop_reason": "official_iou_after_step",
+    "step_wall_start": 6640.543781398,
+    "step_wall_end_before_next_step": 6665.098297488,
+    "step_total_time_sec": 24.554516090000106,
+    "total_time_sec": 24.554516090000106,
+    "time_eval_before_sec": 5.266383231999498,
+    "time_object_pose_sec": 0.0004195560004518484,
+    "time_get_stable_robot_state_sec": 3.477250238999659,
+    "time_debug_vis_before_sec": 0.18456682700070814,
+    "time_generate_candidate_bundle_sec": 0.7188341799992486,
+    "time_select_best_plan_sec": 0.0004900320000160718,
+    "time_debug_vis_planned_sec": 0.2242652740005724,
+    "time_execute_push_sec": 7.744405073000053,
+    "time_sleep_after_push_sec": 1.000403643000027,
+    "time_eval_after_sec": 4.875676934999319,
+    "time_get_state_after_sec": 0.8959590040003604,
+    "time_postprocess_prediction_error_sec": 0.00016062400027294643,
+    "time_profile_total_sec": 24.554516586999853
   }
 ]

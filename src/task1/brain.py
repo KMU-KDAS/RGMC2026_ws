@@ -804,45 +804,114 @@ class PushingBrain:
             return scored[:config.DIRECT_ACTION_SHORTLIST_TOPK]
 
     def _attach_feasible_candidates(self, robot_xy, scored_actions, obstacle_polygon, shape_type):
+        """
+        후보 action들에 대해 접근 경로를 붙인다.
+
+        기존 방식:
+            MAX_APPROACH_WAYPOINTS 하나로만 검사
+            -> 5개 제한에서 실패하면 긴 경로 후보를 전부 버림
+
+        수정 방식:
+            5개 제한으로 먼저 검사
+            없으면 8개
+            없으면 10개
+            없으면 12개
+            순서로 점진적으로 완화
+
+        장점:
+            - 짧은 경로가 있으면 무조건 짧은 경로를 우선 사용
+            - 진짜 막힌 경우에만 긴 A* 경로 허용
+        """
         feasible = {}
         attach_fail_count = 0
 
-        for item in scored_actions:
-            candidate = item["candidate"]
-
-            retreat_distance = (
-                config.T_RETREAT_DISTANCE
-                if shape_type == "T_BASE"
-                else config.RETREAT_DISTANCE
+        waypoint_limits = list(
+            getattr(
+                config,
+                "APPROACH_WAYPOINT_LIMIT_SEQUENCE",
+                [getattr(config, "MAX_APPROACH_WAYPOINTS", 5)],
             )
+        )
 
-            if not self._candidate_motion_is_in_workspace(
-                candidate["start"],
-                candidate["end"],
-                candidate["n_hat"],
-                retreat_distance,
-            ):
-                attach_fail_count += 1
-                continue
+        if len(waypoint_limits) == 0:
+            waypoint_limits = [getattr(config, "MAX_APPROACH_WAYPOINTS", 5)]
 
-            motion = self.motion_planner.attach_approach(
-                robot_xy,
-                candidate["start"],
-                candidate["end"],
-                candidate["n_hat"],
-                obstacle_polygon,
-                retreat_distance=retreat_distance,
-            )
+        original_max_waypoints = getattr(config, "MAX_APPROACH_WAYPOINTS", None)
 
-            if motion is not None:
-                feasible[candidate["index"]] = {
-                    "motion": motion,
-                    **item,
-                }
-            else:
-                attach_fail_count += 1
+        total_attempts = 0
+        last_fail_count = 0
 
-        return feasible, len(scored_actions), attach_fail_count
+        try:
+            for limit in waypoint_limits:
+                config.MAX_APPROACH_WAYPOINTS = int(limit)
+
+                feasible_this_limit = {}
+                fail_this_limit = 0
+                attempt_this_limit = 0
+
+                for item in scored_actions:
+                    candidate = item["candidate"]
+
+                    retreat_distance = (
+                        config.T_RETREAT_DISTANCE
+                        if shape_type == "T_BASE"
+                        else config.RETREAT_DISTANCE
+                    )
+
+                    if not self._candidate_motion_is_in_workspace(
+                        candidate["start"],
+                        candidate["end"],
+                        candidate["n_hat"],
+                        retreat_distance,
+                    ):
+                        fail_this_limit += 1
+                        attempt_this_limit += 1
+                        continue
+
+                    motion = self.motion_planner.attach_approach(
+                        robot_xy,
+                        candidate["start"],
+                        candidate["end"],
+                        candidate["n_hat"],
+                        obstacle_polygon,
+                        retreat_distance=retreat_distance,
+                    )
+
+                    attempt_this_limit += 1
+
+                    if motion is not None:
+                        feasible_this_limit[candidate["index"]] = {
+                            "motion": motion,
+                            **item,
+                        }
+                    else:
+                        fail_this_limit += 1
+
+                total_attempts += attempt_this_limit
+                last_fail_count = fail_this_limit
+
+                # 이 limit에서 feasible이 하나라도 나오면 바로 종료
+                # 즉, 5개로 가능하면 8/10/12까지 절대 안 감
+                if feasible_this_limit:
+                    feasible = feasible_this_limit
+
+                    if getattr(config, "DEBUG_BRAIN", False):
+                        print(
+                            f"[BRAIN] attach success with "
+                            f"MAX_APPROACH_WAYPOINTS={int(limit)}, "
+                            f"feasible={len(feasible)}"
+                        )
+
+                    return feasible, attempt_this_limit, fail_this_limit
+
+            # 모든 limit에서 실패한 경우
+            attach_fail_count = last_fail_count
+            return feasible, len(scored_actions), attach_fail_count
+
+        finally:
+            # 다른 코드에 영향 안 주도록 원래 값 복구
+            if original_max_waypoints is not None:
+                config.MAX_APPROACH_WAYPOINTS = original_max_waypoints
 
     def generate_candidate_bundle(
         self,

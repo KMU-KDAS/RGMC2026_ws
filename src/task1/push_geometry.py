@@ -297,11 +297,12 @@ def shape_alignment_error(
     local_corners: Sequence[Point],
     radius: Optional[float] = None,
 ) -> float:
-    # 모양 정렬 오차 계산
+    # 원은 회전 의미가 없으므로 중심 거리만 비교
     if shape_type == "WEIGHTED_CIRCLE":
         return float(
             np.linalg.norm(
-                np.asarray(current_pose[:2], dtype=float) - np.asarray(target_pose[:2], dtype=float)
+                np.asarray(current_pose[:2], dtype=float)
+                - np.asarray(target_pose[:2], dtype=float)
             )
         )
 
@@ -311,4 +312,36 @@ def shape_alignment_error(
     if len(current_points) == 0:
         return 0.0
 
+    if len(current_points) != len(target_points):
+        return float(np.mean(np.linalg.norm(current_points - target_points, axis=1)))
+
+    # -------------------------------------------------
+    # 네모 전용:
+    # 물리 계산의 theta / COM / inertia는 그대로 둔다.
+    # 여기서는 "최종 형상 오차" 계산에서만 꼭짓점 시작 번호 차이를 허용한다.
+    #
+    # 예:
+    # 1234 == 2341 == 3412 == 4123
+    # 또한 인식 순서가 반대로 잡힌 경우도 고려한다.
+    # -------------------------------------------------
+    if shape_type == "WEIGHTED_SQUARE":
+        n = len(current_points)
+        best_err = float("inf")
+
+        # 같은 방향 순환 shift
+        for shift in range(n):
+            rolled_target = np.roll(target_points, shift=shift, axis=0)
+            err = float(np.mean(np.linalg.norm(current_points - rolled_target, axis=1)))
+            best_err = min(best_err, err)
+
+        # 반대 방향 순환 shift
+        reversed_target = target_points[::-1]
+        for shift in range(n):
+            rolled_target = np.roll(reversed_target, shift=shift, axis=0)
+            err = float(np.mean(np.linalg.norm(current_points - rolled_target, axis=1)))
+            best_err = min(best_err, err)
+
+        return best_err
+
+    # T_BASE 같은 비대칭 물체는 기존처럼 꼭짓점 순서를 유지해서 비교
     return float(np.mean(np.linalg.norm(current_points - target_points, axis=1)))

@@ -6,25 +6,25 @@ PUSH_SPEED_MPS = 0.0933   # 일단 측정값 넣기
 MIN_PUSH_STEPS = 3
 
 
-t_STROKE_SCALE = 1.0
+T_BASE_STROKE_SCALE = 1.0
 
-T_ALLOWED_STROKES_FAR = [1.2, 1.4]
+T_ALLOWED_STROKES_FAR = [1.4, 1.6]
 T_ALLOWED_STROKES_MID = [0.6, 0.9]
-T_ALLOWED_STROKES_NEAR = [0.2, 0.5]
+T_ALLOWED_STROKES_NEAR = [0.25, 0.55]
 
 # 원/네모도 T자처럼 config에서 stroke 배율을 조절
 # 이 값들은 절대 길이가 아니라 base_stroke에 곱해지는 배율임.
 # 최종 stroke_len = min(base_stroke * 배율, MAX_STROKE_LEN * 배율)
-SQUARE_ALLOWED_STROKES_FAR = [1.2, 1.4]
-SQUARE_ALLOWED_STROKES_MID = [0.6, 0.9]
-SQUARE_ALLOWED_STROKES_NEAR = [0.2, 0.5]
+SQUARE_ALLOWED_STROKES_FAR = [1.65, 1.85]
+SQUARE_ALLOWED_STROKES_MID = [0.6, 0.95]
+SQUARE_ALLOWED_STROKES_NEAR = [0.25, 0.55]
 
 CIRCLE_ALLOWED_STROKES_FAR = [1.8, 2.0]
 CIRCLE_ALLOWED_STROKES_MID = [0.7, 1.0]
 CIRCLE_ALLOWED_STROKES_NEAR = [0.25, 0.55]
 RETREAT_DISTANCE = 0.03
 T_RETREAT_DISTANCE = 0.02
-T_SCALE = 1.06
+T_BASE_SCALE = 1.06
 SQUARE_SCALE = 1.06
 CIRCLE_SCALE = 1.06
 # =========================================================
@@ -158,7 +158,7 @@ PATH_GRID_RES = 0.002 / REAL_WORKSPACE_SIZE_X
 # 직선 path는 보통 2개, L자 path는 보통 3개라서 10개 제한은 직선/L자에는 거의 영향 없음.
 # A*를 쓰는 motion_planner.py에서 len(approach_path)가 이 값을 넘으면 해당 후보를 버린다.
 MAX_APPROACH_WAYPOINTS = 5
-
+APPROACH_WAYPOINT_LIMIT_SEQUENCE = [5, 7, 9, 12]
 # =========================================================
 # U-shape path planning
 # =========================================================
@@ -237,10 +237,11 @@ FACE_FILTER_TOPK = 6
 # 휴리스틱 모드에서 원을 찌를 때 생성할 각도 수 (위의 24보다 좀 더 듬성듬성한 16개)
 DIRECT_CIRCLE_CANDIDATE_ANGLES = 16
 # 휴리스틱 모드 다각형 찌르기 비율
-DIRECT_EDGE_RATIOS = [0.1, 0.3, 0.5, 0.7, 0.9]
+DIRECT_EDGE_RATIOS = [0.1, 0.25, 0.5, 0.75, 0.9]
 # 고려할 액션 종류: 정직하게 밀기, 좌스핀, 우스핀
 # 휴리스틱 모드에서 스핀 먹일 때 접선 방향 스케일
-DIRECT_SPIN_TANGENT_SCALE = 0.25
+DIRECT_SPIN_TANGENT_SCALE = 0.3
+#DIRECT_SPIN_TANGENT_SCALE = 0.25
 # 목표에 거의 다 왔을 때 힘을 원래의 30%로 줄임
 # 아무리 짧게 밀어도 로봇 푸셔 반지름의 75%보다는 길게 밀어야 함 (찔끔거림 방지)
 
@@ -302,7 +303,7 @@ def get_shape_corners(shape_type):
         return [(0.0, 0.0)]
     if shape_type == "t":
         sx, sy = REAL_WORKSPACE_SIZE_X, REAL_WORKSPACE_SIZE_Y
-        k = T_SCALE
+        k = T_BASE_SCALE
         return [
             (k * 0.005 / sx,  k * -0.015 / sy),
             (k * 0.015 / sx,  k * -0.015 / sy),

@@ -1,7 +1,7 @@
 import time
 
 try:
-    import config
+    from task1 import config
 except Exception:
     config = None
 
