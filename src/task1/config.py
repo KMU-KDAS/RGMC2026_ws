@@ -6,7 +6,7 @@ PUSH_SPEED_MPS = 0.0933   # 일단 측정값 넣기
 MIN_PUSH_STEPS = 3
 
 
-T_BASE_STROKE_SCALE = 1.0
+t_STROKE_SCALE = 1.0
 
 T_ALLOWED_STROKES_FAR = [1.2, 1.4]
 T_ALLOWED_STROKES_MID = [0.6, 0.9]
@@ -24,7 +24,7 @@ CIRCLE_ALLOWED_STROKES_MID = [0.7, 1.0]
 CIRCLE_ALLOWED_STROKES_NEAR = [0.25, 0.55]
 RETREAT_DISTANCE = 0.03
 T_RETREAT_DISTANCE = 0.02
-T_BASE_SCALE = 1.06
+T_SCALE = 1.06
 SQUARE_SCALE = 1.06
 CIRCLE_SCALE = 1.06
 # =========================================================
@@ -79,7 +79,7 @@ MU_G = 0.6
 # 3. Shape DB (물체 정보 데이터베이스)
 # =========================================================
 SHAPE_DB = {
-    "WEIGHTED_SQUARE": { # 한쪽으로 무게가 쏠린 정사각형 블록
+    "square": { # 한쪽으로 무게가 쏠린 정사각형 블록
         "eff_r": 1.5*0.01148, # 유효 반경(회전 마찰력을 계산할 때 쓰는 바닥 면적의 등가 반지름)
         "cases": { # 가능한 무게중심 가설(Case)들
             # CASE_0: 무게가 정확히 정중앙에 있는 이상적인 상태 (질량 m, 관성모멘트 I, 무게중심 com 좌표)
@@ -97,7 +97,7 @@ SHAPE_DB = {
             "CASE_3_ALL": {"m": 0.0104, "I": 0.00000145, "com": np.array([-0.000885, 0.0])},
         },
     },
-    "WEIGHTED_CIRCLE": { # 한쪽으로 무게가 쏠린 원형 블록 (구조는 위와 동일)
+    "circle": { # 한쪽으로 무게가 쏠린 원형 블록 (구조는 위와 동일)
         "eff_r": 1.5*0.01000,
         "cases": {
             "CASE_0": {"m": 0.00726, "I": 0.00000077, "com": np.array([0.0, 0.0])},
@@ -110,7 +110,7 @@ SHAPE_DB = {
             "CASE_3_ALL": {"m": 0.00846, "I": 0.00000089, "com": np.array([-0.000331, 0.000331])},
         },
     },
-    "T_BASE": { # T자형 블록 (얘는 대회 규정상 무게추가 안 붙어서 CASE_0 하나만 존재)
+    "t": { # T자형 블록 (얘는 대회 규정상 무게추가 안 붙어서 CASE_0 하나만 존재)
         "eff_r": 8*0.01100,
         "cases": {
             "CASE_0": {"m": 0.00833, "I": 0.0000011124, "com": np.array([0.00265, 0.0])},
@@ -289,7 +289,7 @@ def get_shape_corners(shape_type):
     # s = 중심에서 꼭짓점까지의 거리(15mm를 정규화한 값)
     s = 0.015 / REAL_WORKSPACE_SIZE_X
     
-    if shape_type == "WEIGHTED_SQUARE":
+    if shape_type == "square":
         k = SQUARE_SCALE
         return [
             ( k * s,  k * s),
@@ -297,12 +297,12 @@ def get_shape_corners(shape_type):
             (-k * s, -k * s),
             ( k * s, -k * s),
         ]
-    if shape_type == "WEIGHTED_CIRCLE":
+    if shape_type == "circle":
         # 원형은 중심점 하나만 필요
         return [(0.0, 0.0)]
-    if shape_type == "T_BASE":
+    if shape_type == "t":
         sx, sy = REAL_WORKSPACE_SIZE_X, REAL_WORKSPACE_SIZE_Y
-        k = T_BASE_SCALE
+        k = T_SCALE
         return [
             (k * 0.005 / sx,  k * -0.015 / sy),
             (k * 0.015 / sx,  k * -0.015 / sy),
@@ -319,7 +319,7 @@ def get_shape_corners(shape_type):
 # 헬퍼 함수 2: 원형 물체의 반지름 반환
 # =========================================================
 def get_shape_radius(shape_type):
-    if shape_type == "WEIGHTED_CIRCLE":
+    if shape_type == "circle":
         # 원의 실제 반지름 1.5cm를 정규화해서 반환
         return CIRCLE_SCALE * (0.015 / REAL_WORKSPACE_SIZE_X)
     return None
