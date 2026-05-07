@@ -3,9 +3,14 @@ import sys
 import os
 from dotenv import load_dotenv
 
-#ROBOT_ID = 22
-#ROBOT_NAME = f"robot{ROBOT_ID}"
-ROBOT_NAME=f"competition"
+ROBOT_ID = 31
+competition = False
+
+if competition == True:
+    ROBOT_NAME=f"competition"
+else:
+    ROBOT_NAME = f"robot{ROBOT_ID}"
+
 
 # =========================
 # Project Path Setup
@@ -104,6 +109,6 @@ import cv2
 
 while True:
     image, timestamp = robot.getImageBaseUndistorted()
-    cv2.imshow("Cloudgripper top camera stream", image)
+    cv2.imshow("Cloudgripper Base camera stream", image)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
