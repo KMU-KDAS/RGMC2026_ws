@@ -3,13 +3,21 @@ import sys
 import os
 from dotenv import load_dotenv
 
-ROBOT_ID = 31
-competition = False
+robot_id_input = input("Enter robot ID: ").strip()
 
-if competition == True:
+if not robot_id_input.isdigit():
+    raise ValueError(f"Invalid robot ID: {robot_id_input}")
+
+ROBOT_ID = int(robot_id_input)
+
+if ROBOT_ID == -1:
     ROBOT_NAME=f"competition"
 else:
     ROBOT_NAME = f"robot{ROBOT_ID}"
+
+
+print("Using ROBOT_ID  :", ROBOT_ID)
+print("Using ROBOT_NAME:", ROBOT_NAME)
 
 
 # =========================
