@@ -318,7 +318,7 @@ class PushingBrain:
             if base_stroke <= 1e-10:
                 return candidates
 
-            if shape_type == "WEIGHTED_CIRCLE":
+            if shape_type == "circle":
                 cx, cy = shape_info
                 angles = np.linspace(
                     0.0,
@@ -394,7 +394,7 @@ class PushingBrain:
                 t_hat = seg["t_hat"]
                 n_hat = seg["n_hat"]
 
-                ratios = config.T_EDGE_RATIOS if shape_type == "T_BASE" else config.DIRECT_EDGE_RATIOS
+                ratios = config.T_EDGE_RATIOS if shape_type == "t" else config.DIRECT_EDGE_RATIOS
 
                 for ratio in ratios:
                     surface_start = p1 + ratio * edge_vec
@@ -496,7 +496,7 @@ class PushingBrain:
                     0 if item["quickly_reachable"] else 1,
                 )
             )
-            topk = config.T_FACE_FILTER_TOPK if shape_type == "T_BASE" else config.FACE_FILTER_TOPK
+            topk = config.T_FACE_FILTER_TOPK if shape_type == "t" else config.FACE_FILTER_TOPK
             return scored_faces[:topk]
 
     def generate_candidate_actions(self, filtered_faces, shape_type, shape_info, allowed_strokes, base_stroke):
@@ -516,10 +516,10 @@ class PushingBrain:
                 # filter_faces_by_dynamics()에서 살아남은 ratio만 사용
                 selected_ratio = float(face.get("ratio", 0.5))
 
-                if shape_type == "WEIGHTED_CIRCLE":
+                if shape_type == "circle":
                     ratios = [0.5]
 
-                elif shape_type == "T_BASE":
+                elif shape_type == "t":
                     p1 = np.array(face.get("segment_p1", shape_info[face_idx]), dtype=float)
                     p2 = np.array(face.get("segment_p2", shape_info[(face_idx + 1) % len(shape_info)]), dtype=float)
                     edge_vec = p2 - p1
@@ -544,7 +544,7 @@ class PushingBrain:
                     ratios = [selected_ratio]
 
                 for ratio in ratios:
-                    if shape_type == "WEIGHTED_CIRCLE":
+                    if shape_type == "circle":
                         start_pt = face["start"].copy()
                     else:
                         surface_start = p1 + ratio * edge_vec
@@ -604,7 +604,7 @@ class PushingBrain:
             return candidates
 
     def _shape_polygon(self, shape_type, current_pose, local_corners, radius):
-        if shape_type == "WEIGHTED_CIRCLE":
+        if shape_type == "circle":
             return make_circle_polygon(current_pose[:2], radius, config.CIRCLE_POLY_POINTS)
         return get_global_corners(current_pose, local_corners)
 
@@ -635,7 +635,7 @@ class PushingBrain:
     def _goal_vector(self, shape_type, current_pose, target_pose):
         dx = target_pose[0] - current_pose[0]
         dy = target_pose[1] - current_pose[1]
-        dtheta = 0.0 if shape_type == "WEIGHTED_CIRCLE" else wrap_angle(target_pose[2] - current_pose[2])
+        dtheta = 0.0 if shape_type == "circle" else wrap_angle(target_pose[2] - current_pose[2])
 
         return np.array([
             config.DIRECT_TRANSLATION_GAIN * dx,
@@ -646,7 +646,7 @@ class PushingBrain:
     def _motion_vector(self, shape_type, current_pose, next_pose):
         dx = next_pose[0] - current_pose[0]
         dy = next_pose[1] - current_pose[1]
-        dtheta = 0.0 if shape_type == "WEIGHTED_CIRCLE" else wrap_angle(next_pose[2] - current_pose[2])
+        dtheta = 0.0 if shape_type == "circle" else wrap_angle(next_pose[2] - current_pose[2])
 
         return np.array([
             config.DIRECT_TRANSLATION_GAIN * dx,
@@ -682,15 +682,15 @@ class PushingBrain:
         현재 목표까지의 global_err에 따라 사용할 stroke 배율 목록을 고른다.
         각 값은 절대 길이가 아니라 base_stroke에 곱해지는 multiplier다.
         """
-        if shape_type == "T_BASE":
+        if shape_type == "t":
             far = config.T_ALLOWED_STROKES_FAR
             mid = config.T_ALLOWED_STROKES_MID
             near = config.T_ALLOWED_STROKES_NEAR
-        elif shape_type == "WEIGHTED_CIRCLE":
+        elif shape_type == "circle":
             far = getattr(config, "CIRCLE_ALLOWED_STROKES_FAR", [1.2, 1.6])
             mid = getattr(config, "CIRCLE_ALLOWED_STROKES_MID", [0.7, 0.9])
             near = getattr(config, "CIRCLE_ALLOWED_STROKES_NEAR", [0.2, 0.5])
-        elif shape_type == "WEIGHTED_SQUARE":
+        elif shape_type == "square":
             far = getattr(config, "SQUARE_ALLOWED_STROKES_FAR", [1.2, 1.6])
             mid = getattr(config, "SQUARE_ALLOWED_STROKES_MID", [0.7, 0.9])
             near = getattr(config, "SQUARE_ALLOWED_STROKES_NEAR", [0.2, 0.5])
@@ -854,7 +854,7 @@ class PushingBrain:
 
                     retreat_distance = (
                         config.T_RETREAT_DISTANCE
-                        if shape_type == "T_BASE"
+                        if shape_type == "t"
                         else config.RETREAT_DISTANCE
                     )
 
@@ -924,7 +924,7 @@ class PushingBrain:
         lookahead_override=None,
     ):
         robot_xy = np.array(robot_pose[:2] if robot_pose is not None else config.ROBOT_START_XY, dtype=float)
-        shape_info = current_pose[:2] if shape_type == "WEIGHTED_CIRCLE" else get_global_corners(current_pose, local_corners)
+        shape_info = current_pose[:2] if shape_type == "circle" else get_global_corners(current_pose, local_corners)
 
         ref_path = self.build_reference_path(current_pose, target_pose)
 
@@ -959,7 +959,7 @@ class PushingBrain:
             self._stroke_len_from_error(shape_type, current_pose, target_pose),
             config.DIRECT_MIN_STROKE_LEN,
         )
-        if shape_type == "T_BASE":
+        if shape_type == "t":
             base_stroke *= config.T_BASE_STROKE_SCALE
 
         allowed_strokes = self._allowed_strokes_from_error(shape_type, global_err)
@@ -1205,7 +1205,7 @@ class PushingBrain:
             return max(scored, key=lambda item: item["score"])
 
     def get_best_action(self, shape_type, current_pose, target_pose, shape_info, planner=None, radius=None):
-        if shape_type == "WEIGHTED_CIRCLE":
+        if shape_type == "circle":
             local_corners = [(0.0, 0.0)]
         else:
             cx, cy, theta = current_pose
