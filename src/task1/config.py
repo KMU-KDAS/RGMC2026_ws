@@ -8,9 +8,9 @@ MIN_PUSH_STEPS = 3
 
 T_BASE_STROKE_SCALE = 1.0
 
-T_ALLOWED_STROKES_FAR = [1.4, 1.6]
-T_ALLOWED_STROKES_MID = [0.6, 0.9]
-T_ALLOWED_STROKES_NEAR = [0.25, 0.55]
+T_ALLOWED_STROKES_FAR = [1.6, 1.8]
+T_ALLOWED_STROKES_MID = [0.6, 0.95]
+T_ALLOWED_STROKES_NEAR = [0.25, 0.45]
 
 # 원/네모도 T자처럼 config에서 stroke 배율을 조절
 # 이 값들은 절대 길이가 아니라 base_stroke에 곱해지는 배율임.
@@ -113,7 +113,7 @@ SHAPE_DB = {
     "t": { # T자형 블록 (얘는 대회 규정상 무게추가 안 붙어서 CASE_0 하나만 존재)
         "eff_r": 8*0.01100,
         "cases": {
-            "CASE_0": {"m": 0.00833, "I": 0.0000011124, "com": np.array([0.00265, 0.0])},
+            "CASE_0": {"m": 0.00833, "I": 0.00000233, "com": np.array([0.00265, 0.0])}
         },
     },
 }
