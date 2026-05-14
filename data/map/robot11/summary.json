@@ -1,0 +1,42 @@
+{
+  "started_at": "2026-05-11T23:42:42.770188",
+  "finished_at": "2026-05-12T02:53:33.736003",
+  "output_dir": "/Users/kimsumin/projects/RGMC/data/map/robot11",
+  "config": {
+    "grid_size": 33,
+    "x_min": 0.0,
+    "x_max": 0.94,
+    "y_min": 0.0,
+    "y_max": 1.0,
+    "frames_per_point": 5,
+    "settle_time_sec": 0.7,
+    "inter_frame_sec": 0.05,
+    "reverse_xy": false,
+    "resume": true,
+    "save_masks": true,
+    "write_debug_json": true,
+    "output_subdir": "rope_calibration",
+    "custom_points": null,
+    "camera_params_file": null,
+    "planar_only": true,
+    "prefer_raw_base_image": true,
+    "min_valid_frames": 3,
+    "aggregate_mode": "median",
+    "detector_lower_hsv": [
+      10,
+      120,
+      120
+    ],
+    "detector_upper_hsv": [
+      15,
+      255,
+      255
+    ],
+    "detector_kernel_size": 5,
+    "detector_min_area": 100
+  },
+  "z_height": 0.0,
+  "n_total_points": 1089,
+  "n_success_in_this_run": 1089,
+  "n_fail_in_this_run": 0
+}
