@@ -8,9 +8,9 @@ MIN_PUSH_STEPS = 3
 
 T_BASE_STROKE_SCALE = 1.0
 
-T_ALLOWED_STROKES_FAR = [1.6, 1.8]
-T_ALLOWED_STROKES_MID = [0.6, 0.95]
-T_ALLOWED_STROKES_NEAR = [0.25, 0.45]
+T_ALLOWED_STROKES_FAR = [1.7, 1.9]
+T_ALLOWED_STROKES_MID = [0.7, 0.95]
+T_ALLOWED_STROKES_NEAR = [0.25, 0.5]
 
 # 원/네모도 T자처럼 config에서 stroke 배율을 조절
 # 이 값들은 절대 길이가 아니라 base_stroke에 곱해지는 배율임.
