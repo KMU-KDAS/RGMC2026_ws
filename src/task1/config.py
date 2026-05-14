@@ -1,6 +1,7 @@
 import numpy as np
 
-IOU_SUCCESS_THRES = 0.8 # 현재 물체와 목표 물체의 겹치는 면적 비율(IoU)이 96% 이상이면 성공
+IOU_SUCCESS = 0.9
+IOU_SUCCESS_T = 0.8
 # measured robot push speed (m/s)
 PUSH_SPEED_MPS = 0.0933   # 일단 측정값 넣기
 MIN_PUSH_STEPS = 3
