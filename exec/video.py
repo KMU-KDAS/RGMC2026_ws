@@ -14,7 +14,7 @@ import numpy as np
 # =========================================================
 # Recording / overlay settings
 # =========================================================
-FPS = 10.0
+FPS = 60.0
 STATUS_POLL_SEC = 0.50        # eval_status() polling interval
 OBJECT_POLL_SEC = 0.50        # eval_object() polling interval
 TARGET_RETRY_SEC = 2.00       # retry eval_target() if target was not available
