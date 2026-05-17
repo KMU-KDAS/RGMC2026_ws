@@ -1,7 +1,8 @@
 import numpy as np
 
-IOU_SUCCESS = 0.9
-IOU_SUCCESS_T = 0.8
+IOU_SUCCESS_C= 0.9
+IOU_SUCCESS_S = 0.8
+IOU_SUCCESS_T = 0.7
 # measured robot push speed (m/s)
 PUSH_SPEED_MPS = 0.0933   # 일단 측정값 넣기
 MIN_PUSH_STEPS = 3
