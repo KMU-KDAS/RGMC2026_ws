@@ -14,7 +14,15 @@ import numpy as np
 # =========================================================
 # Recording / overlay settings
 # =========================================================
-FPS = 60.0
+# This is the encoded MP4 playback FPS, not the robot camera capture FPS.
+# The script writes duplicate frames when the robot/API capture loop is slower,
+# so video playback duration matches real elapsed recording time.
+OUTPUT_FPS = 30.0
+
+# If the API stalls badly, this prevents writing too many duplicate frames at once.
+# 60 frames at 30 FPS = 2 seconds of catch-up.
+MAX_DUPLICATE_FRAMES_PER_LOOP = 60
+
 STATUS_POLL_SEC = 0.50        # eval_status() polling interval
 OBJECT_POLL_SEC = 0.50        # eval_object() polling interval
 TARGET_RETRY_SEC = 2.00       # retry eval_target() if target was not available
@@ -42,7 +50,9 @@ def parse_robot_id(value: str) -> int:
     try:
         return int(value.strip())
     except Exception:
-        raise ValueError("Invalid robot ID: {}. Use a number, for example 19, 22, or -1 for competition.".format(value))
+        raise ValueError(
+            "Invalid robot ID: {}. Use a number, for example 19, 22, or -1 for competition.".format(value)
+        )
 
 
 def parse_task_id(value: str) -> int:
@@ -83,6 +93,7 @@ def find_project_root(start: Path) -> Path:
     for p in [start] + list(start.parents):
         if (p / "src").exists() and (p / "configs").exists() and (p / "data").exists():
             return p
+
     # Fallback to the original video.py convention: one level above script directory.
     return start.parent
 
@@ -201,9 +212,11 @@ def is_polyline_geometry(task_id: int, source_name: str, n_points: int) -> bool:
 def scale_points(points: Optional[np.ndarray], scale_x: float, scale_y: float) -> Optional[np.ndarray]:
     if points is None:
         return None
+
     out = np.asarray(points, dtype=np.float32).copy()
     if out.ndim != 2 or out.shape[1] != 2:
         return None
+
     out[:, 0] *= float(scale_x)
     out[:, 1] *= float(scale_y)
     return out
@@ -212,13 +225,17 @@ def scale_points(points: Optional[np.ndarray], scale_x: float, scale_y: float) -
 def filter_finite_points(points: Optional[np.ndarray], width: int, height: int) -> Optional[np.ndarray]:
     if points is None:
         return None
+
     pts = np.asarray(points, dtype=np.float32)
     if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) == 0:
         return None
+
     mask = np.isfinite(pts).all(axis=1)
     pts = pts[mask]
+
     if len(pts) == 0:
         return None
+
     # Keep points drawable even if slightly outside the image due to API noise.
     pts[:, 0] = np.clip(pts[:, 0], -10000, width + 10000)
     pts[:, 1] = np.clip(pts[:, 1], -10000, height + 10000)
@@ -237,6 +254,7 @@ def draw_points_geometry(
     """Draw Task1 polygon or Task2 rope polyline on a frame."""
     h, w = frame.shape[:2]
     pts = filter_finite_points(points, w, h)
+
     if pts is None or len(pts) < 1:
         return
 
@@ -254,8 +272,10 @@ def draw_points_geometry(
         )
 
     radius = 3 if task_id == 2 else 4
+
     for idx, (u, v) in enumerate(pts_int):
         cv2.circle(frame, (int(u), int(v)), radius, color, -1, lineType=cv2.LINE_AA)
+
         # For Task2, draw sparse node indices to avoid clutter.
         if task_id == 2 and idx in {0, len(pts_int) - 1}:
             cv2.putText(
@@ -282,14 +302,21 @@ def draw_points_geometry(
     )
 
 
-def polygon_iou_px(poly_a: Optional[np.ndarray], poly_b: Optional[np.ndarray], image_shape: Tuple[int, int]) -> Optional[float]:
+def polygon_iou_px(
+    poly_a: Optional[np.ndarray],
+    poly_b: Optional[np.ndarray],
+    image_shape: Tuple[int, int],
+) -> Optional[float]:
     """Compute image-space polygon IoU for Task1 eval_target/eval_object overlays."""
     if poly_a is None or poly_b is None:
         return None
+
     a = np.asarray(poly_a, dtype=np.float32)
     b = np.asarray(poly_b, dtype=np.float32)
+
     if len(a) < 3 or len(b) < 3:
         return None
+
     if not np.isfinite(a).all() or not np.isfinite(b).all():
         return None
 
@@ -299,35 +326,49 @@ def polygon_iou_px(poly_a: Optional[np.ndarray], poly_b: Optional[np.ndarray], i
 
     ai = np.round(a).astype(np.int32).reshape((-1, 1, 2))
     bi = np.round(b).astype(np.int32).reshape((-1, 1, 2))
+
     cv2.fillPoly(mask_a, [ai], 1)
     cv2.fillPoly(mask_b, [bi], 1)
 
     inter = np.logical_and(mask_a, mask_b).sum()
     union = np.logical_or(mask_a, mask_b).sum()
+
     if union <= 0:
         return None
+
     return float(inter) / float(union)
 
 
-def task2_rmse_and_score_px(target_points: Optional[np.ndarray], current_points: Optional[np.ndarray]) -> Tuple[Optional[float], Optional[float]]:
+def task2_rmse_and_score_px(
+    target_points: Optional[np.ndarray],
+    current_points: Optional[np.ndarray],
+) -> Tuple[Optional[float], Optional[float]]:
     """Compute Task2 pixel RMSE and score proxy from 20-point target/current observations."""
     if target_points is None or current_points is None:
         return None, None
+
     tgt = np.asarray(target_points, dtype=np.float32)
     cur = np.asarray(current_points, dtype=np.float32)
+
     if tgt.ndim != 2 or cur.ndim != 2 or tgt.shape[1] != 2 or cur.shape[1] != 2:
         return None, None
+
     if len(tgt) == 0 or len(cur) == 0:
         return None, None
+
     n = min(len(tgt), len(cur))
     tgt = tgt[:n]
     cur = cur[:n]
+
     mask = np.isfinite(tgt).all(axis=1) & np.isfinite(cur).all(axis=1)
+
     if not np.any(mask):
         return None, None
+
     diff = cur[mask] - tgt[mask]
     rmse = float(np.sqrt(np.mean(np.sum(diff * diff, axis=1))))
     score = max(0.0, 1.0 - rmse / TASK2_RMSE_SCORE_DENOM_PX)
+
     return rmse, score
 
 
@@ -357,28 +398,32 @@ def find_first_number_by_keys(obj: Any, keys: Sequence[str]) -> Optional[float]:
                         return float(v)
                     except Exception:
                         pass
+
                 out = _walk(v)
                 if out is not None:
                     return out
+
         elif isinstance(x, (list, tuple)):
             for item in x:
                 out = _walk(item)
                 if out is not None:
                     return out
+
         return None
 
     return _walk(obj)
-
-
 
 
 def get_status_text(status_payload: Any) -> Optional[str]:
     """Return normalized eval_status.status text, if present."""
     if not isinstance(status_payload, dict):
         return None
+
     status = status_payload.get("status", None)
+
     if status is None:
         return None
+
     return str(status).strip().lower().replace(" ", "_")
 
 
@@ -392,6 +437,7 @@ def eval_run_present_from_status(status_payload: Any) -> bool:
         return False
 
     status_text = get_status_text(status_payload)
+
     absent_statuses = {
         "not_started",
         "not_running",
@@ -403,6 +449,7 @@ def eval_run_present_from_status(status_payload: Any) -> bool:
         "eval_status_failed",
         "failed_to_get_eval_status",
     }
+
     present_statuses = {
         "running",
         "completed",
@@ -416,6 +463,7 @@ def eval_run_present_from_status(status_payload: Any) -> bool:
 
     if status_text in absent_statuses:
         return False
+
     if status_text in present_statuses:
         return True
 
@@ -432,10 +480,12 @@ def eval_run_present_from_status(status_payload: Any) -> bool:
         "time_remaining",
         "remain",
     ]
+
     if find_first_number_by_keys(status_payload, metric_keys) is not None:
         return True
 
     return False
+
 
 def format_float(value: Any, digits: int = 3) -> str:
     try:
@@ -454,6 +504,7 @@ def build_overlay_lines(
     frame_shape: Tuple[int, int, int],
 ) -> List[Tuple[str, Tuple[int, int, int]]]:
     status = "?"
+
     if isinstance(status_payload, dict):
         status = str(status_payload.get("status", "?"))
 
@@ -465,6 +516,7 @@ def build_overlay_lines(
 
     if task_id == 1:
         computed_iou = polygon_iou_px(target_points, current_points, frame_shape[:2])
+
         if computed_iou is not None:
             lines.append(("IoU(px): {}".format(format_float(computed_iou, 3)), COLOR_TEXT))
 
@@ -472,13 +524,16 @@ def build_overlay_lines(
             status_payload,
             ["current_iou", "iou", "iou_score", "current_score", "score", "final_score"],
         )
+
         if eval_iou is not None:
             lines.append(("eval: {}".format(format_float(eval_iou, 3)), COLOR_TEXT))
 
     else:
         rmse_px, score_px = task2_rmse_and_score_px(target_points, current_points)
+
         if rmse_px is not None:
             lines.append(("RMSE(px): {}".format(format_float(rmse_px, 1)), COLOR_TEXT))
+
         if score_px is not None:
             lines.append(("score(px): {}".format(format_float(score_px, 3)), COLOR_TEXT))
 
@@ -486,11 +541,13 @@ def build_overlay_lines(
             status_payload,
             ["current_score", "score", "final_score"],
         )
+
         if eval_score is not None:
             lines.append(("eval: {}".format(format_float(eval_score, 3)), COLOR_TEXT))
 
     if target_points is None:
         lines.append(("target: unavailable", COLOR_WARN))
+
     if current_points is None:
         lines.append(("object: unavailable", COLOR_WARN))
 
@@ -510,6 +567,7 @@ def draw_corner_overlay(frame: np.ndarray, lines: List[Tuple[str, Tuple[int, int
     thickness = 1
 
     max_w = 0
+
     for text, _ in lines:
         (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
         max_w = max(max_w, tw)
@@ -532,14 +590,56 @@ def draw_corner_overlay(frame: np.ndarray, lines: List[Tuple[str, Tuple[int, int
             thickness,
             cv2.LINE_AA,
         )
+
     return frame
+
+
+def write_frame_realtime(
+    video_writer: cv2.VideoWriter,
+    frame: np.ndarray,
+    real_elapsed_sec: float,
+    output_fps: float,
+    written_frame_count: int,
+    max_duplicate_frames_per_loop: int,
+) -> int:
+    """Write enough duplicate frames so MP4 playback time tracks real elapsed time.
+
+    OpenCV VideoWriter creates constant-FPS video. If the robot/API capture loop is
+    slower than output_fps, writing only one frame per captured image makes the
+    video play too fast. This function writes repeated copies of the latest frame
+    until the encoded video catches up with real time.
+
+    Returns the new written_frame_count.
+    """
+    if output_fps <= 0:
+        raise ValueError("output_fps must be positive.")
+
+    expected_written_frames = int(real_elapsed_sec * output_fps) + 1
+    frames_to_write = expected_written_frames - written_frame_count
+
+    if frames_to_write <= 0:
+        return written_frame_count
+
+    if frames_to_write > max_duplicate_frames_per_loop:
+        print(
+            "[WARN] Capture/API stall detected. Need {} catch-up frames, limiting to {}.".format(
+                frames_to_write,
+                max_duplicate_frames_per_loop,
+            )
+        )
+        frames_to_write = max_duplicate_frames_per_loop
+
+    for _ in range(frames_to_write):
+        video_writer.write(frame)
+
+    return written_frame_count + frames_to_write
 
 
 # =========================================================
 # Output Path Setup
 # =========================================================
 
-OUTPUT_DIR = DATA_ROOT / "videos" 
+OUTPUT_DIR = DATA_ROOT / "videos"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 date_time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -554,6 +654,7 @@ print("VIDEO_PATH:", VIDEO_PATH)
 # =========================================================
 
 TOKEN = os.getenv("CLOUDGRIPPER_TOKEN")
+
 if not TOKEN:
     raise RuntimeError("CLOUDGRIPPER_TOKEN not set")
 
@@ -562,7 +663,6 @@ robot = GripperRobot(ROBOT_NAME, TOKEN)
 state_out = safe_call("get_state", robot.get_state, default=None)
 print("Initial robot state:")
 print(state_out)
-
 
 
 # =========================================================
@@ -582,11 +682,13 @@ RUN_PRESENT_SOURCE = "not_detected"
 latest_target_payload = None
 latest_target_points = None
 latest_target_source = "run_not_present"
+
 latest_object_payload = None
 latest_object_points = None
 latest_object_source = "run_not_present"
 
 latest_status_payload = safe_call("eval_status", robot.eval_status, default={})
+
 if not RUN_PRESENT and eval_run_present_from_status(latest_status_payload):
     RUN_PRESENT = True
     RUN_PRESENT_SOURCE = "detected_from_eval_status"
@@ -599,8 +701,18 @@ if RUN_PRESENT:
     latest_object_points, latest_object_source = extract_eval_geometry_points(latest_object_payload)
 
     print("Eval/competition run detected. Overlay enabled. Source:", RUN_PRESENT_SOURCE)
-    print("Initial target source:", latest_target_source, "points:", None if latest_target_points is None else len(latest_target_points))
-    print("Initial object source:", latest_object_source, "points:", None if latest_object_points is None else len(latest_object_points))
+    print(
+        "Initial target source:",
+        latest_target_source,
+        "points:",
+        None if latest_target_points is None else len(latest_target_points),
+    )
+    print(
+        "Initial object source:",
+        latest_object_source,
+        "points:",
+        None if latest_object_points is None else len(latest_object_points),
+    )
 else:
     print("No eval/competition run detected. Target, current object, and metrics overlays are disabled.")
 
@@ -611,7 +723,9 @@ print("Initial eval_status:", latest_status_payload)
 # Video Recording Setup
 # =========================================================
 
-image, timestamp = unpack_image_result(safe_call("getImageBaseUndistorted", robot.getImageBaseUndistorted, default=(None, None)))
+image, timestamp = unpack_image_result(
+    safe_call("getImageBaseUndistorted", robot.getImageBaseUndistorted, default=(None, None))
+)
 
 if image is None:
     raise RuntimeError("Failed to get first image from robot.")
@@ -622,7 +736,7 @@ fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 video_writer = cv2.VideoWriter(
     str(VIDEO_PATH),
     fourcc,
-    FPS,
+    OUTPUT_FPS,
     (width, height),
 )
 
@@ -630,27 +744,36 @@ if not video_writer.isOpened():
     raise RuntimeError("Failed to open video writer: {}".format(VIDEO_PATH))
 
 print("Recording started.")
+print("Encoded output FPS:", OUTPUT_FPS)
 print("Target/object/metric overlays are written only while an eval/competition run is present.")
 print("Press Ctrl+C to stop and save the video.")
 
-frame_count = 0
-start_time = time.time()
+captured_frame_count = 0
+written_frame_count = 0
+
+start_time_wall = time.time()
+start_time_mono = time.monotonic()
+
 last_status_poll = 0.0
 last_object_poll = 0.0
 last_target_retry = 0.0
-frame_period = 1.0 / float(FPS) if FPS > 0 else 0.0
+
 
 try:
     while True:
-        loop_start = time.monotonic()
-        image, timestamp = unpack_image_result(safe_call("getImageBaseUndistorted", robot.getImageBaseUndistorted, default=(None, None)))
+        image, timestamp = unpack_image_result(
+            safe_call("getImageBaseUndistorted", robot.getImageBaseUndistorted, default=(None, None))
+        )
 
         if image is None:
             print("Warning: received empty image, skipping frame.")
             time.sleep(0.05)
             continue
 
+        captured_frame_count += 1
+
         src_h, src_w = image.shape[:2]
+
         if src_w != width or src_h != height:
             frame = cv2.resize(image, (width, height))
             scale_x = float(width) / float(src_w)
@@ -664,42 +787,53 @@ try:
 
         if now - last_status_poll >= STATUS_POLL_SEC:
             st = safe_call("eval_status", robot.eval_status, default=None)
+
             if st is not None:
                 latest_status_payload = st
                 status_says_run_present = eval_run_present_from_status(st)
+
                 if status_says_run_present and not RUN_PRESENT:
                     RUN_PRESENT = True
                     RUN_PRESENT_SOURCE = "detected_from_eval_status"
                     print("Eval/competition run detected during recording. Overlay enabled.")
+
                 elif RUN_PRESENT and not status_says_run_present:
                     RUN_PRESENT = False
                     RUN_PRESENT_SOURCE = "not_present_from_eval_status"
+
                     latest_target_points = None
                     latest_object_points = None
                     latest_target_source = "run_not_present"
                     latest_object_source = "run_not_present"
+
                     print("Eval/competition run no longer detected. Overlay disabled.")
+
             last_status_poll = now
 
         if RUN_PRESENT and now - last_object_poll >= OBJECT_POLL_SEC:
             obj = safe_call("eval_object", robot.eval_object, default=None)
+
             if obj is not None:
                 pts, source = extract_eval_geometry_points(obj)
                 latest_object_payload = obj
                 latest_object_points = pts
                 latest_object_source = source
+
             last_object_poll = now
 
         if RUN_PRESENT and latest_target_points is None and now - last_target_retry >= TARGET_RETRY_SEC:
             tgt = safe_call("eval_target", robot.eval_target, default=None)
+
             if tgt is not None:
                 pts, source = extract_eval_geometry_points(tgt)
                 latest_target_payload = tgt
                 latest_target_points = pts
                 latest_target_source = source
+
             last_target_retry = now
 
-        elapsed = time.time() - start_time
+        elapsed_wall = time.time() - start_time_wall
+        elapsed_mono = time.monotonic() - start_time_mono
 
         if RUN_PRESENT:
             draw_target_points = scale_points(latest_target_points, scale_x, scale_y)
@@ -715,6 +849,7 @@ try:
                 "current",
                 thickness=2,
             )
+
             draw_points_geometry(
                 frame,
                 draw_target_points,
@@ -729,41 +864,64 @@ try:
                 TASK_ID,
                 ROBOT_NAME,
                 latest_status_payload,
-                elapsed,
+                elapsed_wall,
                 draw_target_points,
                 draw_object_points,
                 frame.shape,
             )
+
             draw_corner_overlay(frame, overlay_lines)
 
-        video_writer.write(frame)
-        frame_count += 1
+        written_frame_count = write_frame_realtime(
+            video_writer=video_writer,
+            frame=frame,
+            real_elapsed_sec=elapsed_mono,
+            output_fps=OUTPUT_FPS,
+            written_frame_count=written_frame_count,
+            max_duplicate_frames_per_loop=MAX_DUPLICATE_FRAMES_PER_LOOP,
+        )
 
         if SHOW_LIVE_PREVIEW:
             cv2.imshow(LIVE_WINDOW_NAME, frame)
+
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 print("q pressed. Stopping recording...")
                 break
 
-        if frame_count % 30 == 0:
-            print("Recorded frames: {}, elapsed time: {:.1f} s".format(frame_count, elapsed))
+        if captured_frame_count % 30 == 0:
+            effective_capture_fps = captured_frame_count / max(elapsed_wall, 1e-6)
+            expected_playback_sec = written_frame_count / max(OUTPUT_FPS, 1e-6)
 
-        loop_elapsed = time.monotonic() - loop_start
-        if frame_period > 0 and loop_elapsed < frame_period:
-            time.sleep(frame_period - loop_elapsed)
+            print(
+                "Captured frames: {}, written frames: {}, elapsed: {:.1f} s, capture FPS: {:.2f}, video duration: {:.1f} s".format(
+                    captured_frame_count,
+                    written_frame_count,
+                    elapsed_wall,
+                    effective_capture_fps,
+                    expected_playback_sec,
+                )
+            )
 
 except KeyboardInterrupt:
     print("\nCtrl+C detected. Stopping recording...")
 
 finally:
     video_writer.release()
+
     try:
         cv2.destroyAllWindows()
     except Exception:
         pass
 
-    elapsed = time.time() - start_time
+    elapsed_wall = time.time() - start_time_wall
+    effective_capture_fps = captured_frame_count / max(elapsed_wall, 1e-6)
+    expected_playback_sec = written_frame_count / max(OUTPUT_FPS, 1e-6)
+
     print("Video saved successfully.")
     print("Path:", VIDEO_PATH)
-    print("Total frames:", frame_count)
-    print("Elapsed time: {:.2f} s".format(elapsed))
+    print("Captured frames:", captured_frame_count)
+    print("Written video frames:", written_frame_count)
+    print("Elapsed real time: {:.2f} s".format(elapsed_wall))
+    print("Effective capture FPS: {:.2f}".format(effective_capture_fps))
+    print("Encoded video FPS:", OUTPUT_FPS)
+    print("Expected playback duration: {:.2f} s".format(expected_playback_sec))
