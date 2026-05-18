@@ -14,20 +14,27 @@ import numpy as np
 # =========================================================
 # Recording / overlay settings
 # =========================================================
-# This is the encoded MP4 playback FPS, not the robot camera capture FPS.
-# The script writes duplicate frames when the robot/API capture loop is slower,
-# so video playback duration matches real elapsed recording time.
-OUTPUT_FPS = 30.0
 
-# If the API stalls badly, this prevents writing too many duplicate frames at once.
-# 60 frames at 30 FPS = 2 seconds of catch-up.
-MAX_DUPLICATE_FRAMES_PER_LOOP = 60
+# The recorder will measure the real getImageBaseUndistorted() stream FPS
+# before opening the video writer.
+AUTO_MEASURE_STREAM_FPS = True
+FPS_MEASURE_FRAMES = 60
+FPS_MEASURE_MIN_FRAMES = 10
+FPS_FALLBACK = 15.0
+
+# Clamp measured FPS to avoid weird values from API jitter.
+MIN_OUTPUT_FPS = 5.0
+MAX_OUTPUT_FPS = 60.0
 
 STATUS_POLL_SEC = 0.50        # eval_status() polling interval
 OBJECT_POLL_SEC = 0.50        # eval_object() polling interval
 TARGET_RETRY_SEC = 2.00       # retry eval_target() if target was not available
 SHOW_LIVE_PREVIEW = False     # keep False if you only want to save video
 LIVE_WINDOW_NAME = "CloudGripper eval overlay recorder"
+
+# If you want the recording loop to behave as close as possible to your simple
+# streaming code, set this False. Eval API calls can slightly reduce capture FPS.
+ENABLE_EVAL_OVERLAY = True
 
 # Task2 official score proxy in pixel domain:
 # score = max(0, 1 - RMSE / 220), based on the Task2 notebook logic.
@@ -65,7 +72,6 @@ def parse_task_id(value: str) -> int:
 robot_id_input = input("Enter robot ID (-1 for competition): ").strip()
 task_id_input = input("Enter task number (1 or 2): ").strip()
 
-
 ROBOT_ID = parse_robot_id(robot_id_input)
 TASK_ID = parse_task_id(task_id_input)
 TASK_NAME = "task{}".format(TASK_ID)
@@ -90,11 +96,12 @@ print("Using COMPETITION_MODE :", COMPETITION_MODE)
 def find_project_root(start: Path) -> Path:
     """Find RGMC project root by walking upward from this script location."""
     start = start.resolve()
+
     for p in [start] + list(start.parents):
         if (p / "src").exists() and (p / "configs").exists() and (p / "data").exists():
             return p
 
-    # Fallback to the original video.py convention: one level above script directory.
+    # Fallback to the original video.py convention.
     return start.parent
 
 
@@ -139,7 +146,7 @@ from cloudgripper_client import GripperRobot
 
 
 # =========================================================
-# Geometry parsing helpers
+# Basic helpers
 # =========================================================
 
 def unpack_image_result(result: Any) -> Tuple[Optional[np.ndarray], Any]:
@@ -150,6 +157,7 @@ def unpack_image_result(result: Any) -> Tuple[Optional[np.ndarray], Any]:
         image = result[0]
         timestamp = result[1] if len(result) > 1 else None
         return image, timestamp
+
     return result, None
 
 
@@ -162,8 +170,77 @@ def safe_call(label: str, fn, default=None):
         return default
 
 
+def clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def get_undistorted_image(robot) -> Tuple[Optional[np.ndarray], Any]:
+    """Use the same image source as your streaming code."""
+    return unpack_image_result(
+        safe_call(
+            "getImageBaseUndistorted",
+            robot.getImageBaseUndistorted,
+            default=(None, None),
+        )
+    )
+
+
+def measure_stream_fps(robot) -> Tuple[float, Optional[np.ndarray], Any]:
+    """Measure the real FPS of getImageBaseUndistorted(), like your streaming code.
+
+    Returns:
+        measured_fps
+        last_valid_image
+        last_valid_timestamp
+    """
+    print("Measuring stream FPS using getImageBaseUndistorted()...")
+
+    frames = 0
+    last_image = None
+    last_timestamp = None
+
+    t0 = time.monotonic()
+
+    while frames < FPS_MEASURE_FRAMES:
+        image, timestamp = get_undistorted_image(robot)
+
+        if image is None:
+            print("[WARN] Empty image during FPS measurement.")
+            time.sleep(0.05)
+            continue
+
+        last_image = image
+        last_timestamp = timestamp
+        frames += 1
+
+        if frames >= FPS_MEASURE_MIN_FRAMES:
+            elapsed = time.monotonic() - t0
+            if elapsed >= 1.0:
+                break
+
+    elapsed = time.monotonic() - t0
+
+    if frames <= 1 or elapsed <= 0:
+        print("[WARN] Could not measure stream FPS. Using fallback:", FPS_FALLBACK)
+        return FPS_FALLBACK, last_image, last_timestamp
+
+    measured_fps = frames / elapsed
+    measured_fps = clamp(measured_fps, MIN_OUTPUT_FPS, MAX_OUTPUT_FPS)
+
+    print("Measured stream frames:", frames)
+    print("Measured stream elapsed: {:.3f} s".format(elapsed))
+    print("Measured stream FPS: {:.2f}".format(measured_fps))
+
+    return measured_fps, last_image, last_timestamp
+
+
+# =========================================================
+# Geometry parsing helpers
+# =========================================================
+
 def _points_from_points_like(points_like: Sequence[Any]) -> np.ndarray:
     pts = []
+
     for p in points_like:
         if isinstance(p, dict):
             if "x" not in p or "y" not in p:
@@ -173,19 +250,17 @@ def _points_from_points_like(points_like: Sequence[Any]) -> np.ndarray:
             if len(p) < 2:
                 continue
             pts.append((float(p[0]), float(p[1])))
+
     return np.asarray(pts, dtype=np.float32)
 
 
 def extract_eval_geometry_points(payload: Any) -> Tuple[Optional[np.ndarray], str]:
-    """Extract 2D pixel points from Task1 or Task2 eval payloads.
-
-    Task1 usually uses geometry.points.
-    Task2 usually uses geometry.segmented_points.
-    """
+    """Extract 2D pixel points from Task1 or Task2 eval payloads."""
     if not isinstance(payload, dict):
         return None, "invalid"
 
     geom = payload.get("geometry", {})
+
     if not isinstance(geom, dict):
         return None, "invalid_geometry"
 
@@ -204,8 +279,10 @@ def is_polyline_geometry(task_id: int, source_name: str, n_points: int) -> bool:
     """Task2 rope is an open polyline; Task1 object target is a closed polygon."""
     if task_id == 2:
         return True
+
     if source_name == "segmented_points":
         return True
+
     return False
 
 
@@ -214,11 +291,13 @@ def scale_points(points: Optional[np.ndarray], scale_x: float, scale_y: float) -
         return None
 
     out = np.asarray(points, dtype=np.float32).copy()
+
     if out.ndim != 2 or out.shape[1] != 2:
         return None
 
     out[:, 0] *= float(scale_x)
     out[:, 1] *= float(scale_y)
+
     return out
 
 
@@ -227,6 +306,7 @@ def filter_finite_points(points: Optional[np.ndarray], width: int, height: int) 
         return None
 
     pts = np.asarray(points, dtype=np.float32)
+
     if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) == 0:
         return None
 
@@ -236,9 +316,9 @@ def filter_finite_points(points: Optional[np.ndarray], width: int, height: int) 
     if len(pts) == 0:
         return None
 
-    # Keep points drawable even if slightly outside the image due to API noise.
     pts[:, 0] = np.clip(pts[:, 0], -10000, width + 10000)
     pts[:, 1] = np.clip(pts[:, 1], -10000, height + 10000)
+
     return pts
 
 
@@ -276,7 +356,6 @@ def draw_points_geometry(
     for idx, (u, v) in enumerate(pts_int):
         cv2.circle(frame, (int(u), int(v)), radius, color, -1, lineType=cv2.LINE_AA)
 
-        # For Task2, draw sparse node indices to avoid clutter.
         if task_id == 2 and idx in {0, len(pts_int) - 1}:
             cv2.putText(
                 frame,
@@ -321,6 +400,7 @@ def polygon_iou_px(
         return None
 
     height, width = image_shape[:2]
+
     mask_a = np.zeros((height, width), dtype=np.uint8)
     mask_b = np.zeros((height, width), dtype=np.uint8)
 
@@ -372,20 +452,6 @@ def task2_rmse_and_score_px(
     return rmse, score
 
 
-def iter_nested(obj: Any) -> Iterable[Any]:
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            yield k
-            yield v
-            for child in iter_nested(v):
-                yield child
-    elif isinstance(obj, (list, tuple)):
-        for item in obj:
-            yield item
-            for child in iter_nested(item):
-                yield child
-
-
 def find_first_number_by_keys(obj: Any, keys: Sequence[str]) -> Optional[float]:
     """Recursively search eval_status payload for one of several possible metric keys."""
     key_set = {str(k).lower() for k in keys}
@@ -400,12 +466,14 @@ def find_first_number_by_keys(obj: Any, keys: Sequence[str]) -> Optional[float]:
                         pass
 
                 out = _walk(v)
+
                 if out is not None:
                     return out
 
         elif isinstance(x, (list, tuple)):
             for item in x:
                 out = _walk(item)
+
                 if out is not None:
                     return out
 
@@ -428,11 +496,7 @@ def get_status_text(status_payload: Any) -> Optional[str]:
 
 
 def eval_run_present_from_status(status_payload: Any) -> bool:
-    """Infer whether an eval/competition run currently exists.
-
-    This is intentionally conservative. If the script did not start a run,
-    overlays are enabled only when eval_status clearly looks like a real run.
-    """
+    """Infer whether an eval/competition run currently exists."""
     if not isinstance(status_payload, dict):
         return False
 
@@ -467,7 +531,6 @@ def eval_run_present_from_status(status_payload: Any) -> bool:
     if status_text in present_statuses:
         return True
 
-    # Some API variants expose score/time fields even if the status string is not standardized.
     metric_keys = [
         "current_iou",
         "iou",
@@ -502,6 +565,7 @@ def build_overlay_lines(
     target_points: Optional[np.ndarray],
     current_points: Optional[np.ndarray],
     frame_shape: Tuple[int, int, int],
+    capture_fps_estimate: Optional[float] = None,
 ) -> List[Tuple[str, Tuple[int, int, int]]]:
     status = "?"
 
@@ -513,6 +577,9 @@ def build_overlay_lines(
         ("status: {}".format(status), COLOR_TEXT),
         ("local t: {:.1f}s".format(local_elapsed), COLOR_TEXT),
     ]
+
+    if capture_fps_estimate is not None:
+        lines.append(("capture FPS: {:.1f}".format(capture_fps_estimate), COLOR_TEXT))
 
     if task_id == 1:
         computed_iou = polygon_iou_px(target_points, current_points, frame_shape[:2])
@@ -594,47 +661,6 @@ def draw_corner_overlay(frame: np.ndarray, lines: List[Tuple[str, Tuple[int, int
     return frame
 
 
-def write_frame_realtime(
-    video_writer: cv2.VideoWriter,
-    frame: np.ndarray,
-    real_elapsed_sec: float,
-    output_fps: float,
-    written_frame_count: int,
-    max_duplicate_frames_per_loop: int,
-) -> int:
-    """Write enough duplicate frames so MP4 playback time tracks real elapsed time.
-
-    OpenCV VideoWriter creates constant-FPS video. If the robot/API capture loop is
-    slower than output_fps, writing only one frame per captured image makes the
-    video play too fast. This function writes repeated copies of the latest frame
-    until the encoded video catches up with real time.
-
-    Returns the new written_frame_count.
-    """
-    if output_fps <= 0:
-        raise ValueError("output_fps must be positive.")
-
-    expected_written_frames = int(real_elapsed_sec * output_fps) + 1
-    frames_to_write = expected_written_frames - written_frame_count
-
-    if frames_to_write <= 0:
-        return written_frame_count
-
-    if frames_to_write > max_duplicate_frames_per_loop:
-        print(
-            "[WARN] Capture/API stall detected. Need {} catch-up frames, limiting to {}.".format(
-                frames_to_write,
-                max_duplicate_frames_per_loop,
-            )
-        )
-        frames_to_write = max_duplicate_frames_per_loop
-
-    for _ in range(frames_to_write):
-        video_writer.write(frame)
-
-    return written_frame_count + frames_to_write
-
-
 # =========================================================
 # Output Path Setup
 # =========================================================
@@ -668,16 +694,9 @@ print(state_out)
 # =========================================================
 # Passive eval/competition run detection
 # =========================================================
-# This recorder does NOT start an eval or competition run.
-# It only observes eval_status(). Overlay is enabled only when an
-# already-started run is detected.
+
 RUN_PRESENT = False
 RUN_PRESENT_SOURCE = "not_detected"
-
-
-# =========================================================
-# Initial target / status / object fetch
-# =========================================================
 
 latest_target_payload = None
 latest_target_points = None
@@ -687,52 +706,71 @@ latest_object_payload = None
 latest_object_points = None
 latest_object_source = "run_not_present"
 
-latest_status_payload = safe_call("eval_status", robot.eval_status, default={})
+latest_status_payload = {}
 
-if not RUN_PRESENT and eval_run_present_from_status(latest_status_payload):
-    RUN_PRESENT = True
-    RUN_PRESENT_SOURCE = "detected_from_eval_status"
+if ENABLE_EVAL_OVERLAY:
+    latest_status_payload = safe_call("eval_status", robot.eval_status, default={})
 
-if RUN_PRESENT:
-    latest_target_payload = safe_call("eval_target", robot.eval_target, default=None)
-    latest_target_points, latest_target_source = extract_eval_geometry_points(latest_target_payload)
+    if not RUN_PRESENT and eval_run_present_from_status(latest_status_payload):
+        RUN_PRESENT = True
+        RUN_PRESENT_SOURCE = "detected_from_eval_status"
 
-    latest_object_payload = safe_call("eval_object", robot.eval_object, default=None)
-    latest_object_points, latest_object_source = extract_eval_geometry_points(latest_object_payload)
+    if RUN_PRESENT:
+        latest_target_payload = safe_call("eval_target", robot.eval_target, default=None)
+        latest_target_points, latest_target_source = extract_eval_geometry_points(latest_target_payload)
 
-    print("Eval/competition run detected. Overlay enabled. Source:", RUN_PRESENT_SOURCE)
-    print(
-        "Initial target source:",
-        latest_target_source,
-        "points:",
-        None if latest_target_points is None else len(latest_target_points),
-    )
-    print(
-        "Initial object source:",
-        latest_object_source,
-        "points:",
-        None if latest_object_points is None else len(latest_object_points),
-    )
+        latest_object_payload = safe_call("eval_object", robot.eval_object, default=None)
+        latest_object_points, latest_object_source = extract_eval_geometry_points(latest_object_payload)
+
+        print("Eval/competition run detected. Overlay enabled. Source:", RUN_PRESENT_SOURCE)
+        print(
+            "Initial target source:",
+            latest_target_source,
+            "points:",
+            None if latest_target_points is None else len(latest_target_points),
+        )
+        print(
+            "Initial object source:",
+            latest_object_source,
+            "points:",
+            None if latest_object_points is None else len(latest_object_points),
+        )
+    else:
+        print("No eval/competition run detected. Target, current object, and metrics overlays are disabled.")
+
+    print("Initial eval_status:", latest_status_payload)
 else:
-    print("No eval/competition run detected. Target, current object, and metrics overlays are disabled.")
+    print("ENABLE_EVAL_OVERLAY is False. Recording will match the simple stream loop more closely.")
 
-print("Initial eval_status:", latest_status_payload)
+
+# =========================================================
+# Measure stream FPS and get first image
+# =========================================================
+
+if AUTO_MEASURE_STREAM_FPS:
+    OUTPUT_FPS, image, timestamp = measure_stream_fps(robot)
+else:
+    OUTPUT_FPS = FPS_FALLBACK
+    image, timestamp = get_undistorted_image(robot)
+
+if image is None:
+    raise RuntimeError(
+        "Failed to get first image from robot.getImageBaseUndistorted(). "
+        "Check whether the simple streaming code works for this same robot."
+    )
+
+height, width = image.shape[:2]
+
+print("Image size:", width, "x", height)
+print("Using output FPS:", OUTPUT_FPS)
 
 
 # =========================================================
 # Video Recording Setup
 # =========================================================
 
-image, timestamp = unpack_image_result(
-    safe_call("getImageBaseUndistorted", robot.getImageBaseUndistorted, default=(None, None))
-)
-
-if image is None:
-    raise RuntimeError("Failed to get first image from robot.")
-
-height, width = image.shape[:2]
-
 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+
 video_writer = cv2.VideoWriter(
     str(VIDEO_PATH),
     fourcc,
@@ -744,33 +782,23 @@ if not video_writer.isOpened():
     raise RuntimeError("Failed to open video writer: {}".format(VIDEO_PATH))
 
 print("Recording started.")
-print("Encoded output FPS:", OUTPUT_FPS)
-print("Target/object/metric overlays are written only while an eval/competition run is present.")
+print("Output FPS was measured from the same getImageBaseUndistorted() stream used by your preview code.")
 print("Press Ctrl+C to stop and save the video.")
 
-captured_frame_count = 0
-written_frame_count = 0
-
-start_time_wall = time.time()
-start_time_mono = time.monotonic()
-
+frame_count = 0
+start_time = time.time()
 last_status_poll = 0.0
 last_object_poll = 0.0
 last_target_retry = 0.0
 
-
 try:
     while True:
-        image, timestamp = unpack_image_result(
-            safe_call("getImageBaseUndistorted", robot.getImageBaseUndistorted, default=(None, None))
-        )
+        image, timestamp = get_undistorted_image(robot)
 
         if image is None:
             print("Warning: received empty image, skipping frame.")
             time.sleep(0.05)
             continue
-
-        captured_frame_count += 1
 
         src_h, src_w = image.shape[:2]
 
@@ -784,102 +812,96 @@ try:
             scale_y = 1.0
 
         now = time.monotonic()
+        elapsed = time.time() - start_time
+        capture_fps_estimate = frame_count / max(elapsed, 1e-6)
 
-        if now - last_status_poll >= STATUS_POLL_SEC:
-            st = safe_call("eval_status", robot.eval_status, default=None)
+        if ENABLE_EVAL_OVERLAY:
+            if now - last_status_poll >= STATUS_POLL_SEC:
+                st = safe_call("eval_status", robot.eval_status, default=None)
 
-            if st is not None:
-                latest_status_payload = st
-                status_says_run_present = eval_run_present_from_status(st)
+                if st is not None:
+                    latest_status_payload = st
+                    status_says_run_present = eval_run_present_from_status(st)
 
-                if status_says_run_present and not RUN_PRESENT:
-                    RUN_PRESENT = True
-                    RUN_PRESENT_SOURCE = "detected_from_eval_status"
-                    print("Eval/competition run detected during recording. Overlay enabled.")
+                    if status_says_run_present and not RUN_PRESENT:
+                        RUN_PRESENT = True
+                        RUN_PRESENT_SOURCE = "detected_from_eval_status"
+                        print("Eval/competition run detected during recording. Overlay enabled.")
 
-                elif RUN_PRESENT and not status_says_run_present:
-                    RUN_PRESENT = False
-                    RUN_PRESENT_SOURCE = "not_present_from_eval_status"
+                    elif RUN_PRESENT and not status_says_run_present:
+                        RUN_PRESENT = False
+                        RUN_PRESENT_SOURCE = "not_present_from_eval_status"
 
-                    latest_target_points = None
-                    latest_object_points = None
-                    latest_target_source = "run_not_present"
-                    latest_object_source = "run_not_present"
+                        latest_target_points = None
+                        latest_object_points = None
+                        latest_target_source = "run_not_present"
+                        latest_object_source = "run_not_present"
 
-                    print("Eval/competition run no longer detected. Overlay disabled.")
+                        print("Eval/competition run no longer detected. Overlay disabled.")
 
-            last_status_poll = now
+                last_status_poll = now
 
-        if RUN_PRESENT and now - last_object_poll >= OBJECT_POLL_SEC:
-            obj = safe_call("eval_object", robot.eval_object, default=None)
+            if RUN_PRESENT and now - last_object_poll >= OBJECT_POLL_SEC:
+                obj = safe_call("eval_object", robot.eval_object, default=None)
 
-            if obj is not None:
-                pts, source = extract_eval_geometry_points(obj)
-                latest_object_payload = obj
-                latest_object_points = pts
-                latest_object_source = source
+                if obj is not None:
+                    pts, source = extract_eval_geometry_points(obj)
+                    latest_object_payload = obj
+                    latest_object_points = pts
+                    latest_object_source = source
 
-            last_object_poll = now
+                last_object_poll = now
 
-        if RUN_PRESENT and latest_target_points is None and now - last_target_retry >= TARGET_RETRY_SEC:
-            tgt = safe_call("eval_target", robot.eval_target, default=None)
+            if RUN_PRESENT and latest_target_points is None and now - last_target_retry >= TARGET_RETRY_SEC:
+                tgt = safe_call("eval_target", robot.eval_target, default=None)
 
-            if tgt is not None:
-                pts, source = extract_eval_geometry_points(tgt)
-                latest_target_payload = tgt
-                latest_target_points = pts
-                latest_target_source = source
+                if tgt is not None:
+                    pts, source = extract_eval_geometry_points(tgt)
+                    latest_target_payload = tgt
+                    latest_target_points = pts
+                    latest_target_source = source
 
-            last_target_retry = now
+                last_target_retry = now
 
-        elapsed_wall = time.time() - start_time_wall
-        elapsed_mono = time.monotonic() - start_time_mono
+            if RUN_PRESENT:
+                draw_target_points = scale_points(latest_target_points, scale_x, scale_y)
+                draw_object_points = scale_points(latest_object_points, scale_x, scale_y)
 
-        if RUN_PRESENT:
-            draw_target_points = scale_points(latest_target_points, scale_x, scale_y)
-            draw_object_points = scale_points(latest_object_points, scale_x, scale_y)
+                draw_points_geometry(
+                    frame,
+                    draw_object_points,
+                    TASK_ID,
+                    latest_object_source,
+                    COLOR_CURRENT,
+                    "current",
+                    thickness=2,
+                )
 
-            # Draw current first, target second, so the target stays visually prominent.
-            draw_points_geometry(
-                frame,
-                draw_object_points,
-                TASK_ID,
-                latest_object_source,
-                COLOR_CURRENT,
-                "current",
-                thickness=2,
-            )
+                draw_points_geometry(
+                    frame,
+                    draw_target_points,
+                    TASK_ID,
+                    latest_target_source,
+                    COLOR_TARGET,
+                    "target",
+                    thickness=2,
+                )
 
-            draw_points_geometry(
-                frame,
-                draw_target_points,
-                TASK_ID,
-                latest_target_source,
-                COLOR_TARGET,
-                "target",
-                thickness=2,
-            )
+                overlay_lines = build_overlay_lines(
+                    TASK_ID,
+                    ROBOT_NAME,
+                    latest_status_payload,
+                    elapsed,
+                    draw_target_points,
+                    draw_object_points,
+                    frame.shape,
+                    capture_fps_estimate=capture_fps_estimate,
+                )
 
-            overlay_lines = build_overlay_lines(
-                TASK_ID,
-                ROBOT_NAME,
-                latest_status_payload,
-                elapsed_wall,
-                draw_target_points,
-                draw_object_points,
-                frame.shape,
-            )
+                draw_corner_overlay(frame, overlay_lines)
 
-            draw_corner_overlay(frame, overlay_lines)
-
-        written_frame_count = write_frame_realtime(
-            video_writer=video_writer,
-            frame=frame,
-            real_elapsed_sec=elapsed_mono,
-            output_fps=OUTPUT_FPS,
-            written_frame_count=written_frame_count,
-            max_duplicate_frames_per_loop=MAX_DUPLICATE_FRAMES_PER_LOOP,
-        )
+        video_writer.write(frame)
+        frame_count += 1
 
         if SHOW_LIVE_PREVIEW:
             cv2.imshow(LIVE_WINDOW_NAME, frame)
@@ -888,17 +910,13 @@ try:
                 print("q pressed. Stopping recording...")
                 break
 
-        if captured_frame_count % 30 == 0:
-            effective_capture_fps = captured_frame_count / max(elapsed_wall, 1e-6)
-            expected_playback_sec = written_frame_count / max(OUTPUT_FPS, 1e-6)
-
+        if frame_count % 30 == 0:
             print(
-                "Captured frames: {}, written frames: {}, elapsed: {:.1f} s, capture FPS: {:.2f}, video duration: {:.1f} s".format(
-                    captured_frame_count,
-                    written_frame_count,
-                    elapsed_wall,
-                    effective_capture_fps,
-                    expected_playback_sec,
+                "Recorded frames: {}, elapsed: {:.1f} s, effective capture FPS: {:.2f}, encoded FPS: {:.2f}".format(
+                    frame_count,
+                    elapsed,
+                    capture_fps_estimate,
+                    OUTPUT_FPS,
                 )
             )
 
@@ -913,15 +931,23 @@ finally:
     except Exception:
         pass
 
-    elapsed_wall = time.time() - start_time_wall
-    effective_capture_fps = captured_frame_count / max(elapsed_wall, 1e-6)
-    expected_playback_sec = written_frame_count / max(OUTPUT_FPS, 1e-6)
+    elapsed = time.time() - start_time
+    effective_capture_fps = frame_count / max(elapsed, 1e-6)
+    expected_video_duration = frame_count / max(OUTPUT_FPS, 1e-6)
 
     print("Video saved successfully.")
     print("Path:", VIDEO_PATH)
-    print("Captured frames:", captured_frame_count)
-    print("Written video frames:", written_frame_count)
-    print("Elapsed real time: {:.2f} s".format(elapsed_wall))
+    print("Total frames:", frame_count)
+    print("Elapsed real time: {:.2f} s".format(elapsed))
     print("Effective capture FPS: {:.2f}".format(effective_capture_fps))
-    print("Encoded video FPS:", OUTPUT_FPS)
-    print("Expected playback duration: {:.2f} s".format(expected_playback_sec))
+    print("Encoded FPS: {:.2f}".format(OUTPUT_FPS))
+    print("Expected playback duration: {:.2f} s".format(expected_video_duration))
+
+    if abs(expected_video_duration - elapsed) > 2.0:
+        print(
+            "[WARN] Playback duration differs from real time by {:.2f} s. "
+            "If this still looks sped up, set ENABLE_EVAL_OVERLAY = False "
+            "or reduce STATUS_POLL_SEC / OBJECT_POLL_SEC API overhead.".format(
+                abs(expected_video_duration - elapsed)
+            )
+        )
