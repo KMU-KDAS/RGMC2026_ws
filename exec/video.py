@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 import os
 import time
+import signal
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -35,6 +36,12 @@ LIVE_WINDOW_NAME = "CloudGripper eval overlay recorder"
 # If you want the recording loop to behave as close as possible to your simple
 # streaming code, set this False. Eval API calls can slightly reduce capture FPS.
 ENABLE_EVAL_OVERLAY = True
+
+# Real-time recording mode:
+# - VideoWriter still uses a constant encoded FPS.
+# - The loop writes enough frames to match wall-clock elapsed time.
+# - If the camera/API does not provide a new image, the previous rendered frame is repeated.
+REALTIME_VIDEO_TIMELINE = True
 
 # Task2 official score proxy in pixel domain:
 # score = max(0, 1 - RMSE / 220), based on the Task2 notebook logic.
@@ -143,6 +150,30 @@ print("Token loaded:", True)
 # =========================================================
 
 from cloudgripper_client import GripperRobot
+
+
+# =========================================================
+# Stop handling
+# =========================================================
+
+STOP_REQUESTED = False
+
+
+def request_stop(signum=None, frame=None):
+    """Request a clean stop when Ctrl+C/SIGINT is received.
+
+    This does not forcibly interrupt a blocking robot API call. Instead, it
+    flips a flag that the recording loop checks immediately after each call
+    returns, so the MP4 writer can be released cleanly.
+    """
+    global STOP_REQUESTED
+
+    if not STOP_REQUESTED:
+        print("\nCtrl+C detected. Stopping recording after current API call...")
+    else:
+        print("\nStop already requested. Finishing shutdown...")
+
+    STOP_REQUESTED = True
 
 
 # =========================================================
@@ -567,58 +598,31 @@ def build_overlay_lines(
     frame_shape: Tuple[int, int, int],
     capture_fps_estimate: Optional[float] = None,
 ) -> List[Tuple[str, Tuple[int, int, int]]]:
-    status = "?"
-
-    if isinstance(status_payload, dict):
-        status = str(status_payload.get("status", "?"))
-
-    lines = [
-        ("{} | {}".format(robot_name, "task{}".format(task_id)), COLOR_TEXT),
-        ("status: {}".format(status), COLOR_TEXT),
-        ("local t: {:.1f}s".format(local_elapsed), COLOR_TEXT),
-    ]
-
-    if capture_fps_estimate is not None:
-        lines.append(("capture FPS: {:.1f}".format(capture_fps_estimate), COLOR_TEXT))
+    """Build a score-only left overlay panel while keeping rope/target drawings unchanged."""
+    score_value = None
 
     if task_id == 1:
-        computed_iou = polygon_iou_px(target_points, current_points, frame_shape[:2])
-
-        if computed_iou is not None:
-            lines.append(("IoU(px): {}".format(format_float(computed_iou, 3)), COLOR_TEXT))
-
-        eval_iou = find_first_number_by_keys(
+        score_value = find_first_number_by_keys(
             status_payload,
             ["current_iou", "iou", "iou_score", "current_score", "score", "final_score"],
         )
 
-        if eval_iou is not None:
-            lines.append(("eval: {}".format(format_float(eval_iou, 3)), COLOR_TEXT))
+        if score_value is None:
+            score_value = polygon_iou_px(target_points, current_points, frame_shape[:2])
 
     else:
-        rmse_px, score_px = task2_rmse_and_score_px(target_points, current_points)
-
-        if rmse_px is not None:
-            lines.append(("RMSE(px): {}".format(format_float(rmse_px, 1)), COLOR_TEXT))
-
-        if score_px is not None:
-            lines.append(("score(px): {}".format(format_float(score_px, 3)), COLOR_TEXT))
-
-        eval_score = find_first_number_by_keys(
+        score_value = find_first_number_by_keys(
             status_payload,
             ["current_score", "score", "final_score"],
         )
 
-        if eval_score is not None:
-            lines.append(("eval: {}".format(format_float(eval_score, 3)), COLOR_TEXT))
+        if score_value is None:
+            _rmse_px, score_value = task2_rmse_and_score_px(target_points, current_points)
 
-    if target_points is None:
-        lines.append(("target: unavailable", COLOR_WARN))
+    if score_value is None:
+        return [("score: unavailable", COLOR_WARN)]
 
-    if current_points is None:
-        lines.append(("object: unavailable", COLOR_WARN))
-
-    return lines
+    return [("score: {}".format(format_float(score_value, 3)), COLOR_TEXT)]
 
 
 def draw_corner_overlay(frame: np.ndarray, lines: List[Tuple[str, Tuple[int, int, int]]]) -> np.ndarray:
@@ -659,6 +663,109 @@ def draw_corner_overlay(frame: np.ndarray, lines: List[Tuple[str, Tuple[int, int
         )
 
     return frame
+
+
+# =========================================================
+# Real-time video timeline helpers
+# =========================================================
+
+def prepare_frame_for_recording(
+    image: np.ndarray,
+    width: int,
+    height: int,
+    task_id: int,
+    robot_name: str,
+    run_present: bool,
+    latest_status_payload: Any,
+    latest_target_points: Optional[np.ndarray],
+    latest_target_source: str,
+    latest_object_points: Optional[np.ndarray],
+    latest_object_source: str,
+    elapsed: float,
+    capture_fps_estimate: Optional[float] = None,
+) -> np.ndarray:
+    """Resize one camera image and draw the current score-only Task2/Task1 overlay."""
+    src_h, src_w = image.shape[:2]
+
+    if src_w != width or src_h != height:
+        frame = cv2.resize(image, (width, height))
+        scale_x = float(width) / float(src_w)
+        scale_y = float(height) / float(src_h)
+    else:
+        frame = image.copy()
+        scale_x = 1.0
+        scale_y = 1.0
+
+    if ENABLE_EVAL_OVERLAY and run_present:
+        draw_target_points = scale_points(latest_target_points, scale_x, scale_y)
+        draw_object_points = scale_points(latest_object_points, scale_x, scale_y)
+
+        draw_points_geometry(
+            frame,
+            draw_object_points,
+            task_id,
+            latest_object_source,
+            COLOR_CURRENT,
+            "current",
+            thickness=2,
+        )
+
+        draw_points_geometry(
+            frame,
+            draw_target_points,
+            task_id,
+            latest_target_source,
+            COLOR_TARGET,
+            "target",
+            thickness=2,
+        )
+
+        overlay_lines = build_overlay_lines(
+            task_id,
+            robot_name,
+            latest_status_payload,
+            elapsed,
+            draw_target_points,
+            draw_object_points,
+            frame.shape,
+            capture_fps_estimate=capture_fps_estimate,
+        )
+
+        draw_corner_overlay(frame, overlay_lines)
+
+    return frame
+
+
+def timestamps_equal(a: Any, b: Any) -> bool:
+    """Best-effort equality check for image timestamps returned by the robot API."""
+    if a is None or b is None:
+        return False
+
+    try:
+        return bool(a == b)
+    except Exception:
+        return str(a) == str(b)
+
+
+
+def image_frame_signature(image: Optional[np.ndarray]) -> Optional[Tuple[Any, ...]]:
+    """Return a compact content signature to detect whether a camera frame changed.
+
+    This avoids treating repeated API returns of the same image as new video content.
+    The frame is downsampled first so the comparison is cheap.
+    """
+    if image is None:
+        return None
+
+    try:
+        small = cv2.resize(image, (32, 18), interpolation=cv2.INTER_AREA)
+        return (image.shape, str(image.dtype), small.tobytes())
+    except Exception:
+        try:
+            arr = np.asarray(image)
+            return (arr.shape, str(arr.dtype), int(np.sum(arr, dtype=np.uint64)))
+        except Exception:
+            return None
 
 
 # =========================================================
@@ -781,39 +888,111 @@ video_writer = cv2.VideoWriter(
 if not video_writer.isOpened():
     raise RuntimeError("Failed to open video writer: {}".format(VIDEO_PATH))
 
+# Install a SIGINT/Ctrl+C handler only after the writer exists, so shutdown
+# always reaches the finally block and releases the MP4 cleanly.
+PREVIOUS_SIGINT_HANDLER = signal.getsignal(signal.SIGINT)
+signal.signal(signal.SIGINT, request_stop)
+
 print("Recording started.")
 print("Output FPS was measured from the same getImageBaseUndistorted() stream used by your preview code.")
-print("Press Ctrl+C to stop and save the video.")
+print("Press Ctrl+C once to stop and save the video cleanly.")
 
-frame_count = 0
+frame_count = 0                 # encoded MP4 frames written
+camera_update_count = 1         # valid camera images received, including the first image
+repeated_frame_count = 0        # encoded slots where the same rendered frame was held
+rendered_frame_version = 0
+last_written_frame_version = -1
+last_progress_print_frame = 0
 start_time = time.time()
+start_monotonic = time.monotonic()
+next_video_frame_time = start_monotonic
+frame_period = 1.0 / max(float(OUTPUT_FPS), 1e-6)
 last_status_poll = 0.0
 last_object_poll = 0.0
 last_target_retry = 0.0
+last_image_timestamp = timestamp
+last_image_signature = image_frame_signature(image)
+
+# Render the first image immediately. It becomes the frame that is held/repeated
+# whenever getImageBaseUndistorted() stalls or returns no usable image.
+last_rendered_frame = prepare_frame_for_recording(
+    image=image,
+    width=width,
+    height=height,
+    task_id=TASK_ID,
+    robot_name=ROBOT_NAME,
+    run_present=RUN_PRESENT,
+    latest_status_payload=latest_status_payload,
+    latest_target_points=latest_target_points,
+    latest_target_source=latest_target_source,
+    latest_object_points=latest_object_points,
+    latest_object_source=latest_object_source,
+    elapsed=0.0,
+    capture_fps_estimate=0.0,
+)
+
+
+def write_due_frames_until(deadline_monotonic: float) -> int:
+    """Write repeated copies of the latest rendered frame until the MP4 catches up to wall-clock time."""
+    global frame_count, repeated_frame_count, next_video_frame_time, last_rendered_frame
+    global rendered_frame_version, last_written_frame_version
+
+    wrote = 0
+
+    while next_video_frame_time <= deadline_monotonic:
+        video_writer.write(last_rendered_frame)
+        frame_count += 1
+
+        if rendered_frame_version == last_written_frame_version:
+            repeated_frame_count += 1
+        else:
+            last_written_frame_version = rendered_frame_version
+
+        wrote += 1
+        next_video_frame_time += frame_period
+
+    return wrote
 
 try:
-    while True:
+    while not STOP_REQUESTED:
+        now_before_capture = time.monotonic()
+
+        if REALTIME_VIDEO_TIMELINE:
+            write_due_frames_until(now_before_capture)
+
         image, timestamp = get_undistorted_image(robot)
+        now_after_capture = time.monotonic()
+        elapsed = time.time() - start_time
+
+        if STOP_REQUESTED:
+            break
+
+        # If the image API blocked or returned nothing, fill the elapsed video time
+        # with the previous rendered frame. This is what makes playback real-time.
+        if REALTIME_VIDEO_TIMELINE:
+            write_due_frames_until(now_after_capture)
 
         if image is None:
-            print("Warning: received empty image, skipping frame.")
-            time.sleep(0.05)
+            if STOP_REQUESTED:
+                break
+            print("Warning: received empty image, holding previous frame.")
+            time.sleep(0.01)
             continue
 
-        src_h, src_w = image.shape[:2]
+        current_image_signature = image_frame_signature(image)
+        timestamp_changed = (last_image_timestamp is not None and timestamp is not None and not timestamps_equal(timestamp, last_image_timestamp))
+        content_changed = current_image_signature is not None and current_image_signature != last_image_signature
+        frame_updated = timestamp_changed or content_changed or (last_image_timestamp is None and last_image_signature is None)
 
-        if src_w != width or src_h != height:
-            frame = cv2.resize(image, (width, height))
-            scale_x = float(width) / float(src_w)
-            scale_y = float(height) / float(src_h)
-        else:
-            frame = image.copy()
-            scale_x = 1.0
-            scale_y = 1.0
+        last_image_timestamp = timestamp
+        last_image_signature = current_image_signature
 
-        now = time.monotonic()
-        elapsed = time.time() - start_time
-        capture_fps_estimate = frame_count / max(elapsed, 1e-6)
+        if frame_updated:
+            camera_update_count += 1
+
+        now = now_after_capture
+        encoded_fps_estimate = frame_count / max(elapsed, 1e-6)
+        camera_fps_estimate = camera_update_count / max(elapsed, 1e-6)
 
         if ENABLE_EVAL_OVERLAY:
             if now - last_status_poll >= STATUS_POLL_SEC:
@@ -863,67 +1042,64 @@ try:
 
                 last_target_retry = now
 
-            if RUN_PRESENT:
-                draw_target_points = scale_points(latest_target_points, scale_x, scale_y)
-                draw_object_points = scale_points(latest_object_points, scale_x, scale_y)
+        # Only replace the held frame after the old frame has been used to cover
+        # the time interval during which no newer camera frame was available.
+        # If the robot API returns the same timestamp again, keep holding the exact
+        # same rendered frame instead of creating extra video time from duplicates.
+        if frame_updated:
+            last_rendered_frame = prepare_frame_for_recording(
+                image=image,
+                width=width,
+                height=height,
+                task_id=TASK_ID,
+                robot_name=ROBOT_NAME,
+                run_present=RUN_PRESENT,
+                latest_status_payload=latest_status_payload,
+                latest_target_points=latest_target_points,
+                latest_target_source=latest_target_source,
+                latest_object_points=latest_object_points,
+                latest_object_source=latest_object_source,
+                elapsed=elapsed,
+                capture_fps_estimate=camera_fps_estimate,
+            )
+            rendered_frame_version += 1
 
-                draw_points_geometry(
-                    frame,
-                    draw_object_points,
-                    TASK_ID,
-                    latest_object_source,
-                    COLOR_CURRENT,
-                    "current",
-                    thickness=2,
-                )
-
-                draw_points_geometry(
-                    frame,
-                    draw_target_points,
-                    TASK_ID,
-                    latest_target_source,
-                    COLOR_TARGET,
-                    "target",
-                    thickness=2,
-                )
-
-                overlay_lines = build_overlay_lines(
-                    TASK_ID,
-                    ROBOT_NAME,
-                    latest_status_payload,
-                    elapsed,
-                    draw_target_points,
-                    draw_object_points,
-                    frame.shape,
-                    capture_fps_estimate=capture_fps_estimate,
-                )
-
-                draw_corner_overlay(frame, overlay_lines)
-
-        video_writer.write(frame)
-        frame_count += 1
+        # If the API returns faster than the encoded FPS, this does not write extra
+        # frames. The newest rendered frame will be used at the next scheduled MP4 slot.
+        if not REALTIME_VIDEO_TIMELINE:
+            video_writer.write(last_rendered_frame)
+            frame_count += 1
 
         if SHOW_LIVE_PREVIEW:
-            cv2.imshow(LIVE_WINDOW_NAME, frame)
+            cv2.imshow(LIVE_WINDOW_NAME, last_rendered_frame)
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 print("q pressed. Stopping recording...")
                 break
 
-        if frame_count % 30 == 0:
+        if frame_count - last_progress_print_frame >= 30:
+            last_progress_print_frame = frame_count
             print(
-                "Recorded frames: {}, elapsed: {:.1f} s, effective capture FPS: {:.2f}, encoded FPS: {:.2f}".format(
+                "Encoded frames: {}, camera updates: {}, repeated frames: {}, elapsed: {:.1f} s, camera FPS: {:.2f}, encoded FPS: {:.2f}".format(
                     frame_count,
+                    camera_update_count,
+                    repeated_frame_count,
                     elapsed,
-                    capture_fps_estimate,
+                    camera_fps_estimate,
                     OUTPUT_FPS,
                 )
             )
-
 except KeyboardInterrupt:
-    print("\nCtrl+C detected. Stopping recording...")
+    STOP_REQUESTED = True
+    print("\nKeyboardInterrupt detected. Stopping recording...")
 
 finally:
+    if REALTIME_VIDEO_TIMELINE:
+        try:
+            write_due_frames_until(time.monotonic())
+        except Exception as e:
+            print("[WARN] final real-time frame flush failed:", repr(e))
+
     video_writer.release()
 
     try:
@@ -931,16 +1107,25 @@ finally:
     except Exception:
         pass
 
+    try:
+        signal.signal(signal.SIGINT, PREVIOUS_SIGINT_HANDLER)
+    except Exception:
+        pass
+
     elapsed = time.time() - start_time
-    effective_capture_fps = frame_count / max(elapsed, 1e-6)
+    effective_encoded_fps = frame_count / max(elapsed, 1e-6)
+    effective_camera_fps = camera_update_count / max(elapsed, 1e-6)
     expected_video_duration = frame_count / max(OUTPUT_FPS, 1e-6)
 
     print("Video saved successfully.")
     print("Path:", VIDEO_PATH)
-    print("Total frames:", frame_count)
+    print("Encoded video frames:", frame_count)
+    print("Camera updates received:", camera_update_count)
+    print("Repeated/held video frames:", repeated_frame_count)
     print("Elapsed real time: {:.2f} s".format(elapsed))
-    print("Effective capture FPS: {:.2f}".format(effective_capture_fps))
-    print("Encoded FPS: {:.2f}".format(OUTPUT_FPS))
+    print("Effective encoded FPS: {:.2f}".format(effective_encoded_fps))
+    print("Effective camera FPS: {:.2f}".format(effective_camera_fps))
+    print("Target encoded FPS: {:.2f}".format(OUTPUT_FPS))
     print("Expected playback duration: {:.2f} s".format(expected_video_duration))
 
     if abs(expected_video_duration - elapsed) > 2.0:
