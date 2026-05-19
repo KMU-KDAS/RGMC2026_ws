@@ -1124,7 +1124,7 @@ class PushingBrain:
                 if progress >= min_progress_cutoff:
                     progress_pass_count += 1
 
-                score = align + progress - config.DIRECT_PATH_PENALTY * path_cost
+                score = align + progress # - config.DIRECT_PATH_PENALTY * path_cost
 
                 if score >= negative_score_cutoff:
                     final_score_pass_count += 1
