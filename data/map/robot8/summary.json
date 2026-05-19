@@ -1,12 +1,12 @@
 {
-  "started_at": "2026-04-01T20:59:48.666562",
-  "finished_at": "2026-04-01T21:00:41.321817",
-  "output_dir": "/Users/kimsumin/projects/RGMC/data/map/robot2",
+  "started_at": "2026-05-19T00:06:14.166416",
+  "finished_at": "2026-05-19T03:47:36.516419",
+  "output_dir": "/Users/kimsumin/projects/RGMC/data/map/robot8",
   "config": {
     "grid_size": 33,
-    "x_min": 0.03,
-    "x_max": 1.0,
-    "y_min": 0.02,
+    "x_min": 0.02,
+    "x_max": 0.97,
+    "y_min": 0.0,
     "y_max": 1.0,
     "frames_per_point": 5,
     "settle_time_sec": 0.7,
@@ -17,7 +17,7 @@
     "write_debug_json": true,
     "output_subdir": "rope_calibration",
     "custom_points": null,
-    "camera_params_file": "../camera/camera-params-cr02.yaml",
+    "camera_params_file": "../camera/camera-params-cr08.yaml",
     "planar_only": true,
     "prefer_raw_base_image": true,
     "min_valid_frames": 3,
@@ -35,7 +35,8 @@
     "detector_kernel_size": 5,
     "detector_min_area": 100
   },
+  "z_height": 0.0,
   "n_total_points": 1089,
-  "n_success_in_this_run": 0,
-  "n_fail_in_this_run": 5
+  "n_success_in_this_run": 1089,
+  "n_fail_in_this_run": 0
 }

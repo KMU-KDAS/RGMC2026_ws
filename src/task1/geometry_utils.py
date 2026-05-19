@@ -300,7 +300,7 @@ def shape_alignment_error(
     radius: Optional[float] = None,
 ) -> float:
     # 원은 회전 의미가 없으므로 중심 거리만 비교
-    if shape_type == "WEIGHTED_CIRCLE":
+    if shape_type == "circle":
         return float(
             np.linalg.norm(
                 np.asarray(current_pose[:2], dtype=float)
@@ -326,7 +326,7 @@ def shape_alignment_error(
     # 1234 == 2341 == 3412 == 4123
     # 또한 인식 순서가 반대로 잡힌 경우도 고려한다.
     # -------------------------------------------------
-    if shape_type == "WEIGHTED_SQUARE":
+    if shape_type == "square":
         n = len(current_points)
         best_err = float("inf")
 
