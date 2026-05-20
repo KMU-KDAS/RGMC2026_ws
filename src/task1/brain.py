@@ -225,6 +225,17 @@ class PushingBrain:
             print(f"  current_pose={self._format_vector(current_pose)}")
             print(f"  next_pose={self._format_vector(item['next_pose'])}")
             print(f"  local_target={self._format_vector(local_target)}")
+            # [수정 디버그] candidate별 matched target 확인용
+            if item.get("eval_target") is not None:
+                print(
+                    f"  eval_target={self._format_vector(item['eval_target'])}, "
+                    f"matched_idx={item.get('matched_idx')}"
+                )
+            if item.get("filter_target") is not None:
+                print(
+                    f"  filter_target={self._format_vector(item['filter_target'])}, "
+                    f"filter_matched_idx={item.get('filter_matched_idx')}"
+                )
             print(
                 "  "
                 f"progress={float(item['progress']):.5f}, "
@@ -305,6 +316,73 @@ class PushingBrain:
 
         target_idx = min(closest_idx + lookahead, len(ref_path) - 1)
         return ref_path[target_idx]
+
+
+    # [수정 추가] filter 단계용: stroke 길이에 맞춰 ref_path 상 local target 선택
+    def pick_local_waypoint_by_stroke_length(self, current_pose, ref_path, stroke_len):
+        """
+        filter_faces_by_dynamics()에서 사용할 target 선택 함수.
+
+        - 입력 stroke_len은 실제 물체 이동량이 아니라 robot push stroke 길이이다.
+        - 따라서 최종 후보 평가는 아래 pick_local_waypoint_by_predicted_pose()로 다시 한다.
+        - 즉, 이 함수는 face 후보를 너무 엉뚱하게 자르지 않기 위한 1차 필터용이다.
+        """
+        if not ref_path:
+            return list(current_pose), 0
+
+        cur_xy = np.asarray(current_pose[:2], dtype=float)
+        stroke_len = float(max(stroke_len, 0.0))
+
+        # 필요하면 config.py에 FILTER_STROKE_TARGET_SCALE을 추가해서 조절 가능.
+        # 기본값 1.0은 "stroke 길이 그대로"를 ref_path 거리와 비교한다는 뜻.
+        scale = float(getattr(config, "FILTER_STROKE_TARGET_SCALE", 1.0))
+        target_step = stroke_len * scale
+
+        best_idx = 1 if len(ref_path) > 1 else 0
+        best_err = float("inf")
+
+        for idx in range(1, len(ref_path)):
+            wp_xy = np.asarray(ref_path[idx][:2], dtype=float)
+            ref_dist = float(np.linalg.norm(wp_xy - cur_xy))
+
+            err = abs(ref_dist - target_step)
+            if err < best_err:
+                best_err = err
+                best_idx = idx
+
+        return ref_path[best_idx], best_idx
+
+    # [수정 추가] 최종 candidate scoring용: simulate된 next_pose에 맞춰 ref_path 상 target 선택
+    def pick_local_waypoint_by_predicted_pose(self, shape_type, current_pose, next_pose, ref_path):
+        """
+        candidate를 실제로 simulate해서 나온 next_pose가
+        ref_path 상에서 어느 정도 진행량에 해당하는지 보고
+        그에 맞는 eval_target을 선택한다.
+
+        핵심:
+        - 기존 local_target은 모든 candidate가 공유하는 고정 LD 목표였다.
+        - eval_target은 candidate마다 next_pose를 보고 새로 잡는 동적 LD 목표다.
+        - 위치뿐 아니라 회전도 반영하기 위해 _motion_vector/_goal_vector의 gain을 사용한다.
+        """
+        if not ref_path:
+            return list(current_pose), 0
+
+        pred_vec = self._motion_vector(shape_type, current_pose, next_pose)
+        pred_step = float(np.linalg.norm(pred_vec))
+
+        best_idx = 1 if len(ref_path) > 1 else 0
+        best_err = float("inf")
+
+        for idx in range(1, len(ref_path)):
+            ref_vec = self._goal_vector(shape_type, current_pose, ref_path[idx])
+            ref_step = float(np.linalg.norm(ref_vec))
+
+            err = abs(ref_step - pred_step)
+            if err < best_err:
+                best_err = err
+                best_idx = idx
+
+        return ref_path[best_idx], best_idx
 
     def compute_lateral_error(self, current_pose, ref_path):
         if not ref_path:
@@ -473,6 +551,7 @@ class PushingBrain:
         robot_xy,
         belief_name,
         obstacle_polygon,
+        ref_path=None,  # [수정 추가] filter 단계에서 stroke_len 기준 target을 잡기 위해 사용
     ):
         with perf_timer("brain.filter_faces_by_dynamics"):
             _ = robot_xy
@@ -481,13 +560,37 @@ class PushingBrain:
             for face in face_candidates:
                 quickly_reachable = self._is_quickly_reachable(face["start"], face["n_hat"], obstacle_polygon)
                 next_pose = self._simulate_case(shape_type, current_pose, face, belief_name)
-                err = shape_alignment_error(shape_type, next_pose, local_target, local_corners, radius)
+
+                # [수정] filter 단계에서는 고정 local_target 대신
+                # face candidate의 stroke_len에 맞는 filter_target을 사용한다.
+                # 단, ref_path가 없으면 기존 local_target 방식으로 fallback한다.
+                filter_target = local_target
+                filter_matched_idx = None
+
+                if ref_path is not None:
+                    filter_target, filter_matched_idx = self.pick_local_waypoint_by_stroke_length(
+                        current_pose,
+                        ref_path,
+                        face.get("stroke_len", 0.0),
+                    )
+
+                err = shape_alignment_error(
+                    shape_type,
+                    next_pose,
+                    filter_target,
+                    local_corners,
+                    radius,
+                )
 
                 scored_faces.append({
                     "face_info": face,
                     "error": float(err),
                     "next_pose": next_pose,
                     "quickly_reachable": bool(quickly_reachable),
+
+                    # [수정 디버그] filter 단계에서 어떤 LD 목표를 봤는지 확인용
+                    "filter_target": filter_target,
+                    "filter_matched_idx": filter_matched_idx,
                 })
 
             scored_faces.sort(
@@ -716,30 +819,71 @@ class PushingBrain:
         candidate,
         current_local_err,
         goal_vec,
+        ref_path=None,       # [수정 추가] candidate별 eval_target 선택용
+        final_target=None,   # [수정 추가] align은 최종 목표 기준으로 계산하기 위함
     ):
         next_pose = self._simulate_case(shape_type, current_pose, candidate, belief_name)
 
-        next_local_err = shape_alignment_error(
+        # [수정] 기본은 기존 local_target을 쓰되,
+        # ref_path가 있으면 candidate의 실제 next_pose에 맞는 eval_target을 새로 잡는다.
+        eval_target = local_target
+        matched_idx = None
+
+        if ref_path is not None:
+            eval_target, matched_idx = self.pick_local_waypoint_by_predicted_pose(
+                shape_type,
+                current_pose,
+                next_pose,
+                ref_path,
+            )
+
+        # [수정] progress/error는 candidate별 eval_target 기준으로 계산한다.
+        current_eval_err = shape_alignment_error(
             shape_type,
-            next_pose,
-            local_target,
+            current_pose,
+            eval_target,
             local_corners,
             radius,
         )
 
-        progress = current_local_err - next_local_err
+        next_eval_err = shape_alignment_error(
+            shape_type,
+            next_pose,
+            eval_target,
+            local_corners,
+            radius,
+        )
+
+        progress = current_eval_err - next_eval_err
+
+        # [수정] align은 가능하면 진짜 최종 target_pose 기준으로 본다.
+        # 이유: eval_target은 candidate마다 자기 이동량에 맞춰 잡힌 중간 LD 목표라서,
+        # 방향성까지 eval_target만 보면 이상한 후보가 유리해질 수 있다.
+        if final_target is not None:
+            align_goal_vec = self._goal_vector(shape_type, current_pose, final_target)
+        else:
+            align_goal_vec = goal_vec
+
         motion_vec = self._motion_vector(shape_type, current_pose, next_pose)
-        align = self._cosine_score(goal_vec, motion_vec)
+        align = self._cosine_score(align_goal_vec, motion_vec)
         cheap_score = align + progress
 
         return {
             "candidate": candidate,
             "next_pose": next_pose,
-            "current_shape_err": float(current_local_err),
-            "next_shape_err": float(next_local_err),
+
+            # [수정] 아래 error/progress 값들은 eval_target 기준이다.
+            "current_shape_err": float(current_eval_err),
+            "next_shape_err": float(next_eval_err),
             "progress": float(progress),
             "align": float(align),
             "cheap_score": float(cheap_score),
+
+            # [수정 디버그] 고정 local_target과 candidate별 eval_target 비교용
+            "eval_target": eval_target,
+            "matched_idx": matched_idx,
+            "fixed_local_target": local_target,
+            "fixed_current_local_err": float(current_local_err),
         }
 
     def score_candidate_actions(
@@ -751,6 +895,8 @@ class PushingBrain:
         local_corners,
         radius,
         belief_name,
+        ref_path=None,      # [수정 추가] candidate별 eval_target 선택용
+        final_target=None,  # [수정 추가] align 최종 목표 기준 계산용
     ):
         with perf_timer("brain.score_candidate_actions"):
             current_local_err = shape_alignment_error(
@@ -760,6 +906,7 @@ class PushingBrain:
                 local_corners,
                 radius,
             )
+            # fallback용 goal_vec. final_target이 들어오면 _evaluate 안에서 final_target 기준으로 다시 계산한다.
             goal_vec = self._goal_vector(shape_type, current_pose, local_target)
 
             scored = []
@@ -775,6 +922,8 @@ class PushingBrain:
                     candidate,
                     current_local_err,
                     goal_vec,
+                    ref_path=ref_path,
+                    final_target=final_target,
                 )
                 scored.append(item)
 
@@ -790,6 +939,8 @@ class PushingBrain:
         local_corners,
         radius,
         belief_name,
+        ref_path=None,      # [수정 추가] candidate별 eval_target 선택용
+        final_target=None,  # [수정 추가] align 최종 목표 기준 계산용
     ):
         with perf_timer("brain.shortlist_candidate_actions"):
             scored = self.score_candidate_actions(
@@ -800,6 +951,8 @@ class PushingBrain:
                 local_corners,
                 radius,
                 belief_name,
+                ref_path=ref_path,
+                final_target=final_target,
             )
             return scored[:config.DIRECT_ACTION_SHORTLIST_TOPK]
 
@@ -983,6 +1136,7 @@ class PushingBrain:
             robot_xy,
             belief_name,
             obstacle_polygon,
+            ref_path=ref_path,  # [수정] filter 단계는 stroke_len 기준 LD 사용
         )
 
         candidate_actions = self.generate_candidate_actions(
@@ -1001,6 +1155,8 @@ class PushingBrain:
             local_corners,
             radius,
             belief_name,
+            ref_path=ref_path,        # [수정] 최종 scoring은 candidate별 next_pose 기준 eval_target 사용
+            final_target=target_pose, # [수정] align은 최종 목표 방향 기준
         )
 
         shortlisted_actions = scored_candidate_actions[:config.DIRECT_ACTION_SHORTLIST_TOPK]
@@ -1133,12 +1289,17 @@ class PushingBrain:
                     "candidate": cand,
                     "motion": motion,
                     "next_pose": next_pose,
-                    "current_shape_err": current_local_err,
+                    # [수정] current_shape_err도 가능하면 eval_target 기준 값을 유지
+                    "current_shape_err": float(item.get("current_shape_err", current_local_err)),
                     "next_shape_err": next_local_err,
                     "score": float(score),
                     "path_cost": float(path_cost),
                     "progress": float(progress),
                     "align": float(align),
+                    # [수정 디버그] 최종 plan에서도 target 정보 확인 가능하게 보존
+                    "eval_target": item.get("eval_target"),
+                    "matched_idx": item.get("matched_idx"),
+                    "fixed_local_target": item.get("fixed_local_target", local_target),
                 })
 
             self._debug_log(

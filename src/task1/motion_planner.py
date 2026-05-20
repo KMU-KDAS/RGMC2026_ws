@@ -115,6 +115,43 @@ class XYMotionPlanner:
             and distance_point_to_polygon(point, obstacle_polygon) > self.obstacle_margin
         )
 
+    # [수정 추가] start/goal endpoint margin relaxation helper
+    def _relax_endpoint_cell_if_margin_only(
+        self,
+        point: Sequence[float],
+        obstacle_polygon,
+        cell_ij: Tuple[int, int],
+    ):
+        """
+        start/goal endpoint가 inflated obstacle margin 때문에 blocked 된 경우만 완화한다.
+
+        핵심 원칙:
+        - 실제 물체 polygon 내부면 절대 허용하지 않음.
+        - 물체 밖인데 obstacle_margin 때문에 blocked 된 endpoint는 허용.
+        - 중간 waypoint/경로 충돌 검사는 기존 obstacle_margin 기준을 유지함.
+        """
+        if obstacle_polygon is None or len(obstacle_polygon) < 3:
+            return False, None
+
+        point = np.asarray(point, dtype=float)
+        if not self._inside_bounds(point):
+            return False, None
+
+        # 진짜 물체 내부면 허용하면 안 된다.
+        if point_in_polygon(point, obstacle_polygon):
+            return False, 0.0
+
+        dist = float(distance_point_to_polygon(point, obstacle_polygon))
+        eps = float(getattr(config, "ENDPOINT_MARGIN_RELAX_EPS", 1e-9))
+
+        # 실제 물체 밖이고 경계에서 아주 조금이라도 떨어져 있으면
+        # margin band 때문에만 막힌 endpoint로 보고 허용한다.
+        if dist > eps:
+            self.blocked_cells.discard(cell_ij)
+            return True, dist
+
+        return False, dist
+
     def _update_costmap(self, obstacle_polygon):
         # A* 길찾기를 하기 전에, 물체가 있는 부분을 바둑판에 '접근 금지(Blocked)'로 칠하는 함수
         with perf_timer("motion_planner._update_costmap", every=config.PERF_LOG_COSTMAP_EVERY):
@@ -571,22 +608,39 @@ class XYMotionPlanner:
         goal_blocked = goal_ij in self.blocked_cells
 
         # -------------------------------------------------
-        # start cell relaxation:
-        # 시작점이 obstacle_margin 때문에만 막힌 경우는 허용
-        # 단, 실제 polygon 내부에 있는 시작점은 허용하지 않음
+        # [수정] endpoint cell relaxation:
+        # start/goal endpoint가 obstacle_margin 때문에만 막힌 경우는 허용한다.
+        # 단, 실제 polygon 내부에 있는 endpoint는 절대 허용하지 않는다.
+        #
+        # 이유:
+        # - pushing task에서는 push 시작점 근처 approach goal이 물체 margin 안에
+        #   들어가는 것이 자연스러운 경우가 많다.
+        # - 다음 step 시작 시 robot current 위치도 물체 margin 안쪽일 수 있다.
+        # - 하지만 중간 waypoint/경로는 기존 margin 충돌 검사를 그대로 유지한다.
         # -------------------------------------------------
-        if start_blocked and len(obstacle_polygon) >= 3:
-            start_dist = distance_point_to_polygon(start, obstacle_polygon)
-            start_inside_true_obstacle = point_in_polygon(start, obstacle_polygon)
+        start_relaxed = False
+        start_relax_dist = None
+        goal_relaxed = False
+        goal_relax_dist = None
 
-            # 진짜 장애물 내부는 아니고, inflated margin band 때문에만 blocked인 경우
-            if (not start_inside_true_obstacle) and (start_dist > 1e-9):
-                self.blocked_cells.discard(start_ij)
-                start_blocked = False
-                self._set_last_debug_info(
-                    start_relaxed=True,
-                    start_relax_dist=float(start_dist),
+        if getattr(config, "ENDPOINT_MARGIN_RELAX_ENABLE", True):
+            if start_blocked:
+                start_relaxed, start_relax_dist = self._relax_endpoint_cell_if_margin_only(
+                    start,
+                    obstacle_polygon,
+                    start_ij,
                 )
+                if start_relaxed:
+                    start_blocked = False
+
+            if goal_blocked:
+                goal_relaxed, goal_relax_dist = self._relax_endpoint_cell_if_margin_only(
+                    goal,
+                    obstacle_polygon,
+                    goal_ij,
+                )
+                if goal_relaxed:
+                    goal_blocked = False
 
         self.last_debug_info = self._make_base_debug_info(
             start=start,
@@ -609,6 +663,13 @@ class XYMotionPlanner:
             original_start_xy=tuple(float(v) for v in original_start),
             start_escape_used=bool(escape_start_used),
             escape_start_xy=None if escape_start_xy is None else tuple(float(v) for v in escape_start_xy),
+
+            # [수정 디버그] endpoint margin relaxation 확인용
+            endpoint_margin_relax_enable=bool(getattr(config, "ENDPOINT_MARGIN_RELAX_ENABLE", True)),
+            start_relaxed=bool(start_relaxed),
+            start_relax_dist=None if start_relax_dist is None else float(start_relax_dist),
+            goal_relaxed=bool(goal_relaxed),
+            goal_relax_dist=None if goal_relax_dist is None else float(goal_relax_dist),
         )
 
         # -------------------------------------------------
