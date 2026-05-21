@@ -30,6 +30,47 @@ T_BASE_SCALE = 1.06
 SQUARE_SCALE = 1.06
 CIRCLE_SCALE = 1.06
 # =========================================================
+# Unknown / surprise polygon dynamic physics controller
+# =========================================================
+# surprise shape는 SHAPE_DB에 미리 없으므로,
+# eval_object polygon에서 면적/도심/관성모멘트를 즉석 계산한 뒤
+# 기존 total_.simulate_push_stroke_normalized() 물리 모델에 넣어 평가한다.
+#
+# 핵심 원칙:
+# - 내부 무게추 없음
+# - 균일 밀도
+# - COM = polygon 면적 도심
+# - stroke 후보 = T_ALLOWED_STROKES_* 그대로 사용
+# - edge ratio = T_EDGE_RATIOS 그대로 사용
+# - face filter top-k = T_FACE_FILTER_TOPK 그대로 사용
+# - action shortlist top-k = DIRECT_ACTION_SHORTLIST_TOPK 그대로 사용
+# - 최종 score = align + progress 그대로 사용
+
+UNKNOWN_IOU_SUCCESS = 0.8
+
+# T자형 기준 면적: 30mm*10mm + 10mm*20mm = 500 mm^2 = 5e-4 m^2
+# m_unknown = T_mass / 0.0005 * polygon_area * UNKNOWN_DYNAMIC_MASS_SCALE
+UNKNOWN_DYNAMIC_REFERENCE_AREA_M2 = 0.0005
+UNKNOWN_DYNAMIC_MASS_SCALE = 1.0
+
+# polygon 이론 관성모멘트에 T의 튜닝된 관성모멘트 비율을 곱해 보정한다.
+# 이후 추가 튜닝이 필요하면 UNKNOWN_DYNAMIC_INERTIA_SCALE만 조절하면 된다.
+UNKNOWN_DYNAMIC_USE_T_INERTIA_SCALE = True
+UNKNOWN_DYNAMIC_INERTIA_SCALE = 1.0
+
+# 회전 마찰 유효 반경은 T의 eff_r를 sqrt(area/T_area)로 스케일한다.
+UNKNOWN_DYNAMIC_EFF_R_SCALE = 1.0
+
+# 안전 clamp. 주최측 polygon은 정상이라고 가정하지만 수치 폭주 방지용으로만 둔다.
+UNKNOWN_DYNAMIC_MIN_MASS_KG = 0.003
+UNKNOWN_DYNAMIC_MAX_MASS_KG = 0.030
+UNKNOWN_DYNAMIC_MIN_INERTIA = 1e-8
+UNKNOWN_DYNAMIC_MAX_INERTIA = 1e-4
+
+# 디버그 출력
+UNKNOWN_DYNAMIC_DEBUG = True
+
+# =========================================================
 # 0. Physical workspace size in meters (물리적 작업 공간 크기)
 # =========================================================
 # 로봇이 실제로 움직이는 바닥 공간의 가로/세로 길이입니다. (단위: 미터)

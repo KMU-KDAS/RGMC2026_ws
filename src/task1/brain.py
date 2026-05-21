@@ -1365,6 +1365,593 @@ class PushingBrain:
 
             return max(scored, key=lambda item: item["score"])
 
+
+    # =========================================================
+    # Unknown / surprise polygon dynamic physics planner
+    # Same selection logic as known shapes:
+    #   - T-style edge ratios and stroke multipliers
+    #   - same face filter top-k
+    #   - same action shortlist top-k
+    #   - same final score = align + progress
+    # Difference:
+    #   - local template, mass, inertia, COM, eff_r are computed from current polygon.
+    # =========================================================
+    @staticmethod
+    def _unknown_poly_as_array(poly):
+        """Accept list/np.ndarray or eval payload-like dict with geometry.points."""
+        if poly is None:
+            return None
+
+        if isinstance(poly, dict):
+            try:
+                pts = poly.get("geometry", {}).get("points", None)
+                if pts is None:
+                    return None
+                poly = [[float(p["x"]), float(p["y"])] for p in pts]
+            except Exception:
+                return None
+
+        arr = np.asarray(poly, dtype=float)
+        if arr.ndim != 2 or arr.shape[1] != 2 or len(arr) < 3:
+            return None
+        if not np.all(np.isfinite(arr)):
+            return None
+        return arr
+
+    @staticmethod
+    def _polygon_signed_area_centroid(points):
+        """Shoelace signed area and area centroid in the input coordinate system."""
+        pts = np.asarray(points, dtype=float)
+        x = pts[:, 0]
+        y = pts[:, 1]
+        x2 = np.roll(x, -1)
+        y2 = np.roll(y, -1)
+        cross = x * y2 - x2 * y
+        area2 = float(np.sum(cross))
+        area = 0.5 * area2
+
+        if abs(area2) < 1e-12:
+            return 0.0, np.mean(pts, axis=0)
+
+        cx = float(np.sum((x + x2) * cross) / (3.0 * area2))
+        cy = float(np.sum((y + y2) * cross) / (3.0 * area2))
+        return area, np.array([cx, cy], dtype=float)
+
+    @staticmethod
+    def _polygon_inertia_about_origin_uniform(points_m, density_kg_per_m2):
+        """
+        Polar moment of inertia about origin for a uniform-density polygon lamina.
+        points_m must already be centered at the desired origin, in meters.
+        """
+        pts = np.asarray(points_m, dtype=float)
+        x = pts[:, 0]
+        y = pts[:, 1]
+        x2 = np.roll(x, -1)
+        y2 = np.roll(y, -1)
+        cross = x * y2 - x2 * y
+        geom = (
+            x * x + x * x2 + x2 * x2
+            + y * y + y * y2 + y2 * y2
+        )
+        iz = float(density_kg_per_m2 * np.sum(cross * geom) / 12.0)
+        return abs(iz)
+
+    def _unknown_t_inertia_scale(self):
+        """
+        Calibrate theoretical uniform-polygon inertia to the tuned T inertia in SHAPE_DB.
+        This transfers the T tuning style to surprise polygons.
+        """
+        if not bool(getattr(config, "UNKNOWN_DYNAMIC_USE_T_INERTIA_SCALE", True)):
+            return 1.0
+
+        try:
+            sx = float(config.REAL_WORKSPACE_SIZE_X)
+            sy = float(config.REAL_WORKSPACE_SIZE_Y)
+            t_case = config.SHAPE_DB["t"]["cases"]["CASE_0"]
+            t_mass = float(t_case["m"])
+            t_tuned_i = float(t_case["I"])
+
+            t_local_norm = np.asarray(config.get_shape_corners("t"), dtype=float)
+            t_local_m = np.column_stack([t_local_norm[:, 0] * sx, t_local_norm[:, 1] * sy])
+            signed_area_m2, centroid_m = self._polygon_signed_area_centroid(t_local_m)
+            area_m2 = abs(float(signed_area_m2))
+            if area_m2 < 1e-12:
+                return 1.0
+
+            density = t_mass / area_m2
+            i_theory = self._polygon_inertia_about_origin_uniform(t_local_m - centroid_m, density)
+            if i_theory < 1e-12:
+                return 1.0
+            return float(t_tuned_i / i_theory)
+        except Exception:
+            return 1.0
+
+    def _unknown_polygon_props(self, current_polygon):
+        """
+        Compute physical properties from perceived current polygon.
+        Assumptions: uniform density, no hidden weights, COM = area centroid.
+        """
+        poly = self._unknown_poly_as_array(current_polygon)
+        if poly is None:
+            return None
+
+        # This planner assumes normalized workspace coordinates, not pixels.
+        if np.nanmax(np.abs(poly)) > 2.0:
+            print("[BRAIN][UNKNOWN_DYNAMIC] polygon values look like pixels. Convert to workspace first.")
+            return None
+
+        signed_area_norm, centroid_norm = self._polygon_signed_area_centroid(poly)
+        if abs(signed_area_norm) < 1e-12:
+            return None
+
+        sx = float(config.REAL_WORKSPACE_SIZE_X)
+        sy = float(config.REAL_WORKSPACE_SIZE_Y)
+        poly_m = np.column_stack([
+            (poly[:, 0] - 0.5) * sx,
+            (poly[:, 1] - 0.5) * sy,
+        ])
+
+        signed_area_m2, centroid_m = self._polygon_signed_area_centroid(poly_m)
+        area_m2 = abs(float(signed_area_m2))
+        if area_m2 < 1e-12:
+            return None
+
+        local_polygon_norm = poly - centroid_norm
+        local_polygon_m = poly_m - centroid_m
+
+        t_case = config.SHAPE_DB["t"]["cases"]["CASE_0"]
+        t_mass = float(t_case["m"])
+        ref_area = float(getattr(config, "UNKNOWN_DYNAMIC_REFERENCE_AREA_M2", 0.0005))
+        mass_scale = float(getattr(config, "UNKNOWN_DYNAMIC_MASS_SCALE", 1.0))
+
+        mass = (t_mass / max(ref_area, 1e-12)) * area_m2 * mass_scale
+        mass = float(np.clip(
+            mass,
+            float(getattr(config, "UNKNOWN_DYNAMIC_MIN_MASS_KG", 0.003)),
+            float(getattr(config, "UNKNOWN_DYNAMIC_MAX_MASS_KG", 0.030)),
+        ))
+
+        density = mass / max(area_m2, 1e-12)
+        inertia = self._polygon_inertia_about_origin_uniform(local_polygon_m, density)
+        inertia *= self._unknown_t_inertia_scale()
+        inertia *= float(getattr(config, "UNKNOWN_DYNAMIC_INERTIA_SCALE", 1.0))
+        inertia = float(np.clip(
+            inertia,
+            float(getattr(config, "UNKNOWN_DYNAMIC_MIN_INERTIA", 1e-8)),
+            float(getattr(config, "UNKNOWN_DYNAMIC_MAX_INERTIA", 1e-4)),
+        ))
+
+        t_eff_r = float(config.SHAPE_DB["t"]["eff_r"])
+        eff_r = t_eff_r * np.sqrt(area_m2 / max(ref_area, 1e-12))
+        eff_r *= float(getattr(config, "UNKNOWN_DYNAMIC_EFF_R_SCALE", 1.0))
+        eff_r = float(max(eff_r, 1e-6))
+
+        return {
+            "polygon": poly,
+            "centroid_norm": centroid_norm,
+            "centroid_m": centroid_m,
+            "local_polygon_norm": local_polygon_norm,
+            "local_polygon_m": local_polygon_m,
+            "area_m2": float(area_m2),
+            "mass": float(mass),
+            "inertia": float(inertia),
+            "eff_r": float(eff_r),
+        }
+
+    @staticmethod
+    def _rotate_points(points, theta):
+        c = float(np.cos(theta))
+        s = float(np.sin(theta))
+        r = np.array([[c, -s], [s, c]], dtype=float)
+        return np.asarray(points, dtype=float) @ r.T
+
+    def _unknown_polygon_from_pose(self, props, pose):
+        local = np.asarray(props["local_polygon_norm"], dtype=float)
+        return self._rotate_points(local, float(pose[2])) + np.asarray(pose[:2], dtype=float)
+
+    def _unknown_alignment_error(self, props, polygon, target_pose):
+        """Same role as shape_alignment_error(), but the template is current polygon itself."""
+        poly = self._unknown_poly_as_array(polygon)
+        if poly is None:
+            return float("inf")
+        target_poly = self._unknown_polygon_from_pose(props, target_pose)
+        if len(poly) != len(target_poly):
+            return float("inf")
+        return float(np.mean(np.linalg.norm(poly - target_poly, axis=1)))
+
+    def _estimate_unknown_target_pose(self, props, target_polygon):
+        """
+        Build target_pose=[target_centroid_x, target_centroid_y, theta]
+        by rigidly aligning current local polygon template to target polygon.
+        """
+        target = self._unknown_poly_as_array(target_polygon)
+        if target is None:
+            return None
+
+        _, target_center = self._polygon_signed_area_centroid(target)
+        a = np.asarray(props["local_polygon_norm"], dtype=float)
+        b0 = target - target_center
+
+        if len(a) != len(b0):
+            # Fallback: no reliable orientation, still move center correctly.
+            return [float(target_center[0]), float(target_center[1]), 0.0]
+
+        best_err = float("inf")
+        best_theta = 0.0
+        variants = [b0]
+        variants.append(b0[::-1])
+
+        for b in variants:
+            for shift in range(len(b)):
+                bb = np.roll(b, shift=shift, axis=0)
+                try:
+                    h = a.T @ bb
+                    u, _, vt = np.linalg.svd(h)
+                    r = vt.T @ u.T
+                    if np.linalg.det(r) < 0.0:
+                        vt[-1, :] *= -1.0
+                        r = vt.T @ u.T
+                    pred = a @ r.T
+                    err = float(np.mean(np.linalg.norm(pred - bb, axis=1)))
+                    if err < best_err:
+                        best_err = err
+                        best_theta = float(np.arctan2(r[1, 0], r[0, 0]))
+                except Exception:
+                    continue
+
+        return [float(target_center[0]), float(target_center[1]), float(wrap_angle(best_theta))]
+
+    def _simulate_unknown_dynamic_candidate(self, props, current_pose, candidate):
+        _, _, theta_next, next_body_center_norm = simulate_push_stroke_normalized(
+            m=props["mass"],
+            i_body=props["inertia"],
+            com_x=0.0,
+            com_y=0.0,
+            body_center_norm=np.asarray(current_pose[:2], dtype=float),
+            theta=float(current_pose[2]),
+            v=np.array([0.0, 0.0], dtype=float),
+            w=0.0,
+            start_x_norm=float(candidate["start"][0]),
+            start_y_norm=float(candidate["start"][1]),
+            end_x_norm=float(candidate["end"][0]),
+            end_y_norm=float(candidate["end"][1]),
+            n_hat=candidate["n_hat"],
+            t_hat=candidate["t_hat"],
+            config_dict=config.__dict__,
+            eff_r=props["eff_r"],
+        )
+
+        next_pose = [
+            float(next_body_center_norm[0]),
+            float(next_body_center_norm[1]),
+            float(wrap_angle(theta_next)),
+        ]
+        pred_polygon = self._unknown_polygon_from_pose(props, next_pose)
+        return next_pose, pred_polygon
+
+    def _filter_unknown_faces_by_dynamics(
+        self,
+        face_candidates,
+        props,
+        current_pose,
+        local_target,
+        robot_xy,
+        obstacle_polygon,
+        ref_path=None,
+    ):
+        with perf_timer("brain.filter_faces_by_dynamics"):
+            _ = robot_xy
+            scored_faces = []
+
+            for face in face_candidates:
+                quickly_reachable = self._is_quickly_reachable(face["start"], face["n_hat"], obstacle_polygon)
+                next_pose, pred_polygon = self._simulate_unknown_dynamic_candidate(props, current_pose, face)
+
+                filter_target = local_target
+                filter_matched_idx = None
+                if ref_path is not None:
+                    filter_target, filter_matched_idx = self.pick_local_waypoint_by_stroke_length(
+                        current_pose,
+                        ref_path,
+                        face.get("stroke_len", 0.0),
+                    )
+
+                err = self._unknown_alignment_error(props, pred_polygon, filter_target)
+
+                scored_faces.append({
+                    "face_info": face,
+                    "error": float(err),
+                    "next_pose": next_pose,
+                    "predicted_polygon": pred_polygon,
+                    "quickly_reachable": bool(quickly_reachable),
+                    "filter_target": filter_target,
+                    "filter_matched_idx": filter_matched_idx,
+                })
+
+            scored_faces.sort(key=lambda item: (item["error"], 0 if item["quickly_reachable"] else 1))
+            return scored_faces[:int(config.T_FACE_FILTER_TOPK)]
+
+    def _score_unknown_candidate_actions(
+        self,
+        candidate_actions,
+        props,
+        current_pose,
+        local_target,
+        ref_path=None,
+        final_target=None,
+    ):
+        with perf_timer("brain.score_candidate_actions"):
+            current_local_err = self._unknown_alignment_error(props, props["polygon"], local_target)
+            goal_vec = self._goal_vector("t", current_pose, local_target)
+            scored = []
+
+            for candidate in candidate_actions:
+                next_pose, pred_polygon = self._simulate_unknown_dynamic_candidate(props, current_pose, candidate)
+
+                eval_target = local_target
+                matched_idx = None
+                if ref_path is not None:
+                    eval_target, matched_idx = self.pick_local_waypoint_by_predicted_pose(
+                        "t",
+                        current_pose,
+                        next_pose,
+                        ref_path,
+                    )
+
+                current_eval_err = self._unknown_alignment_error(props, props["polygon"], eval_target)
+                next_eval_err = self._unknown_alignment_error(props, pred_polygon, eval_target)
+                progress = current_eval_err - next_eval_err
+
+                if final_target is not None:
+                    align_goal_vec = self._goal_vector("t", current_pose, final_target)
+                else:
+                    align_goal_vec = goal_vec
+
+                motion_vec = self._motion_vector("t", current_pose, next_pose)
+                align = self._cosine_score(align_goal_vec, motion_vec)
+                cheap_score = align + progress
+
+                scored.append({
+                    "candidate": candidate,
+                    "next_pose": next_pose,
+                    "predicted_polygon": pred_polygon,
+                    "current_shape_err": float(current_eval_err),
+                    "next_shape_err": float(next_eval_err),
+                    "progress": float(progress),
+                    "align": float(align),
+                    "cheap_score": float(cheap_score),
+                    "eval_target": eval_target,
+                    "matched_idx": matched_idx,
+                    "fixed_local_target": local_target,
+                    "fixed_current_local_err": float(current_local_err),
+                })
+
+            scored.sort(key=lambda item: item["cheap_score"], reverse=True)
+            return scored
+
+    def generate_polygon_candidate_bundle(
+        self,
+        current_polygon,
+        target_polygon,
+        robot_pose=None,
+        lookahead_override=None,
+    ):
+        props = self._unknown_polygon_props(current_polygon)
+        if props is None:
+            return None
+
+        target_pose = self._estimate_unknown_target_pose(props, target_polygon)
+        if target_pose is None:
+            return None
+
+        current_pose = [
+            float(props["centroid_norm"][0]),
+            float(props["centroid_norm"][1]),
+            0.0,
+        ]
+        local_corners = [tuple(map(float, p)) for p in np.asarray(props["local_polygon_norm"], dtype=float)]
+        robot_xy = np.array(robot_pose[:2] if robot_pose is not None else config.ROBOT_START_XY, dtype=float)
+
+        ref_path = self.build_reference_path(current_pose, target_pose)
+        global_err = self._unknown_alignment_error(props, props["polygon"], target_pose)
+
+        chosen_lookahead = (
+            int(lookahead_override)
+            if lookahead_override is not None
+            else self._choose_lookahead(global_err)
+        )
+        local_target = self.pick_local_waypoint(current_pose, ref_path, lookahead=chosen_lookahead)
+        current_local_err = self._unknown_alignment_error(props, props["polygon"], local_target)
+
+        full_shape_polygon = props["polygon"]
+        obstacle_polygon = self._clip_polygon_to_workspace(full_shape_polygon)
+        if obstacle_polygon is None or len(obstacle_polygon) < 3:
+            return None
+
+        base_stroke = max(config.MAX_STROKE_LEN, config.DIRECT_MIN_STROKE_LEN)
+        if global_err <= config.DIRECT_NEAR_GOAL_THRESH:
+            base_stroke = max(
+                config.MAX_STROKE_LEN * config.DIRECT_NEAR_GOAL_STROKE_SCALE,
+                config.DIRECT_MIN_STROKE_LEN,
+            )
+        base_stroke *= float(config.T_BASE_STROKE_SCALE)
+
+        # Same stroke-selection logic as T.
+        allowed_strokes = self._allowed_strokes_from_error("t", global_err)
+
+        # Same face candidate generation as T, but using the perceived polygon as template.
+        face_candidates = self.generate_face_candidates(
+            "t",
+            props["polygon"],
+            None,
+            base_stroke,
+        )
+
+        filtered_faces = self._filter_unknown_faces_by_dynamics(
+            face_candidates,
+            props,
+            current_pose,
+            local_target,
+            robot_xy,
+            obstacle_polygon,
+            ref_path=ref_path,
+        )
+
+        candidate_actions = self.generate_candidate_actions(
+            filtered_faces,
+            "t",
+            props["polygon"],
+            allowed_strokes,
+            base_stroke,
+        )
+
+        scored_candidate_actions = self._score_unknown_candidate_actions(
+            candidate_actions,
+            props,
+            current_pose,
+            local_target,
+            ref_path=ref_path,
+            final_target=target_pose,
+        )
+
+        # Same top-k as known shape direct controller.
+        shortlisted_actions = scored_candidate_actions[:config.DIRECT_ACTION_SHORTLIST_TOPK]
+
+        feasible, attach_attempt_count, attach_fail_count = self._attach_feasible_candidates(
+            robot_xy,
+            shortlisted_actions,
+            obstacle_polygon,
+            "t",
+        )
+
+        exhaustive_attach_used = False
+        if not feasible and len(scored_candidate_actions) > len(shortlisted_actions):
+            exhaustive_attach_used = True
+            remaining_actions = scored_candidate_actions[len(shortlisted_actions):]
+            fallback_feasible, fallback_attempts, fallback_failures = self._attach_feasible_candidates(
+                robot_xy,
+                remaining_actions,
+                obstacle_polygon,
+                "t",
+            )
+            feasible.update(fallback_feasible)
+            attach_attempt_count += fallback_attempts
+            attach_fail_count += fallback_failures
+
+        return {
+            "ref_path": ref_path,
+            "local_target": local_target,
+            "current_local_err": float(current_local_err),
+            "global_shape_err": float(global_err),
+            "chosen_lookahead": int(chosen_lookahead),
+            "shape_info": props["polygon"],
+            "full_shape_polygon": full_shape_polygon,
+            "obstacle_polygon": obstacle_polygon,
+            "base_stroke": float(base_stroke),
+            "filtered_faces": filtered_faces,
+            "allowed_strokes": allowed_strokes,
+            "candidate_actions": candidate_actions,
+            "scored_candidate_actions": scored_candidate_actions,
+            "shortlisted_actions": shortlisted_actions,
+            "feasible": feasible,
+            "attach_attempt_count": attach_attempt_count,
+            "attach_fail_count": attach_fail_count,
+            "exhaustive_attach_used": exhaustive_attach_used,
+            "current_pose": current_pose,
+            "target_pose": target_pose,
+            "local_corners": local_corners,
+            "dynamic_props": {
+                "area_m2": float(props["area_m2"]),
+                "mass": float(props["mass"]),
+                "inertia": float(props["inertia"]),
+                "eff_r": float(props["eff_r"]),
+                "centroid_norm": props["centroid_norm"].astype(float).tolist(),
+                "target_pose": [float(v) for v in target_pose],
+            },
+        }
+
+    def get_best_plan_polygon(
+        self,
+        current_polygon,
+        target_polygon,
+        official_iou=None,
+        planner=None,
+        robot_pose=None,
+    ):
+        """
+        Unknown/surprise shape planner using the same top-k, stroke, filtering,
+        and final score logic as known shapes. The only difference is that the
+        template and physics parameters are computed from the perceived polygon.
+        """
+        with perf_timer("brain.get_best_plan_polygon"):
+            _ = planner
+            current_polygon = self._unknown_poly_as_array(current_polygon)
+            target_polygon = self._unknown_poly_as_array(target_polygon)
+            if current_polygon is None or target_polygon is None:
+                print("[BRAIN][UNKNOWN_DYNAMIC] invalid current/target polygon")
+                return None
+
+            candidate_data = self.generate_polygon_candidate_bundle(
+                current_polygon,
+                target_polygon,
+                robot_pose=robot_pose,
+            )
+            if candidate_data is None:
+                print("[BRAIN][UNKNOWN_DYNAMIC] failed to generate polygon candidate bundle")
+                return None
+
+            plan = self.get_best_plan(
+                shape_type="t",
+                current_pose=candidate_data["current_pose"],
+                target_pose=candidate_data["target_pose"],
+                local_corners=candidate_data["local_corners"],
+                planner=planner,
+                radius=None,
+                robot_pose=robot_pose,
+                candidate_data=candidate_data,
+                allow_farther_retry=False,
+            )
+
+            if plan is None:
+                return None
+
+            idx = int(plan["candidate"]["index"])
+            source_item = candidate_data["feasible"].get(idx)
+            if source_item is not None:
+                for key in [
+                    "predicted_polygon",
+                    "eval_target",
+                    "matched_idx",
+                    "fixed_local_target",
+                    "current_shape_err",
+                    "next_shape_err",
+                ]:
+                    if key in source_item:
+                        plan[key] = source_item[key]
+
+            plan["controller_type"] = "unknown_dynamic_same_logic_v2"
+            plan["dynamic_props"] = candidate_data["dynamic_props"]
+            plan["num_candidates"] = int(len(candidate_data["candidate_actions"]))
+            plan["num_scored"] = int(len(candidate_data["scored_candidate_actions"]))
+            plan["num_feasible"] = int(len(candidate_data["feasible"]))
+            plan["attach_fail_count"] = int(candidate_data.get("attach_fail_count", 0))
+            plan["current_iou"] = None if official_iou is None else float(official_iou)
+
+            if getattr(config, "UNKNOWN_DYNAMIC_DEBUG", False):
+                cand = plan["candidate"]
+                props_dbg = plan["dynamic_props"]
+                print(
+                    "[BRAIN][UNKNOWN_DYNAMIC] selected "
+                    f"face={cand['face_idx']}, ratio={cand['ratio']:.2f}, "
+                    f"action={cand['action_type']}, stroke={cand['stroke_len']:.4f}, "
+                    f"progress={plan['progress']:.5f}, align={plan['align']:.5f}, "
+                    f"score={plan['score']:.5f}, "
+                    f"m={props_dbg['mass']:.5f}kg, I={props_dbg['inertia']:.3e}, "
+                    f"eff_r={props_dbg['eff_r']:.4f}"
+                )
+
+            return plan
+
     def get_best_action(self, shape_type, current_pose, target_pose, shape_info, planner=None, radius=None):
         if shape_type == "circle":
             local_corners = [(0.0, 0.0)]
