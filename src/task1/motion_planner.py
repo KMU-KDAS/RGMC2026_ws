@@ -85,6 +85,34 @@ class XYMotionPlanner:
         p = np.asarray(point, dtype=float)
         return bool(np.all(p >= self.workspace_min) and np.all(p <= self.workspace_max))
 
+    def _clip_start_to_workspace_if_near(self, point: Sequence[float]):
+        """
+        robot_xy가 workspace 밖으로 아주 살짝 튄 경우만 안쪽으로 보정한다.
+
+        - start path planning용 보정이다.
+        - approach_xy / push start / push end / retreat_xy는 건드리지 않는다.
+        - 너무 많이 벗어난 경우는 None을 반환해서 기존 실패 처리를 유지한다.
+        """
+        p = np.asarray(point, dtype=float)
+        tol = float(getattr(config, "FAILSAFE_WORKSPACE_TOL", 0.01))
+        eps = float(getattr(config, "FAILSAFE_CLIP_EPS", 1e-4))
+
+        below = self.workspace_min - p
+        above = p - self.workspace_max
+        violation = max(
+            float(np.max(np.maximum(below, 0.0))),
+            float(np.max(np.maximum(above, 0.0))),
+        )
+
+        if violation > tol:
+            return None
+
+        return np.clip(
+            p,
+            self.workspace_min + eps,
+            self.workspace_max - eps,
+        )
+
     def _sanitize_obstacle_polygon(self, obstacle_polygon):
         """
         planner에서 사용할 장애물 polygon을 workspace 내부 부분만 남기도록 정리.
@@ -115,6 +143,75 @@ class XYMotionPlanner:
             and distance_point_to_polygon(point, obstacle_polygon) > self.obstacle_margin
         )
 
+    def _endpoint_relax_margin(self) -> float:
+        """
+        path start/goal endpoint 전용 최소 허용 clearance.
+
+        일반 경로 중간은 self.obstacle_margin(보통 PUSHER_RADIUS + PATH_OBSTACLE_MARGIN)을 그대로 쓰고,
+        endpoint만 실제 푸셔 반경 수준(기본 6mm)까지 허용한다.
+        """
+        default_margin = 0.006 / float(getattr(config, "REAL_WORKSPACE_SIZE_X", 0.15))
+        return float(getattr(config, "ENDPOINT_RELAX_MARGIN", default_margin))
+
+    def _endpoint_relax_zone(self) -> float:
+        """
+        endpoint 근처 몇 normalized 거리까지 완화할지.
+        endpoint 바로 한 점만 완화하면 sampling 때문에 바로 옆 점에서 다시 막힐 수 있어
+        기본 1cm 구간만 endpoint margin을 적용한다.
+        """
+        default_zone = 0.010 / float(getattr(config, "REAL_WORKSPACE_SIZE_X", 0.15))
+        return float(getattr(config, "ENDPOINT_RELAX_ZONE", default_zone))
+
+    def _segment_hits_polygon_endpoint_relaxed(
+        self,
+        a: Sequence[float],
+        b: Sequence[float],
+        obstacle_polygon,
+        allow_start_relax: bool = False,
+        allow_end_relax: bool = False,
+    ) -> bool:
+        """
+        선분 충돌 검사. 일반 중간 구간은 obstacle_margin 그대로 유지하고,
+        path의 시작/끝 endpoint 주변만 ENDPOINT_RELAX_MARGIN(기본 6mm)까지 완화한다.
+
+        geometry_utils.segment_hits_polygon() 시그니처를 바꾸지 않고 motion_planner 내부에서만 처리한다.
+        """
+        if obstacle_polygon is None or len(obstacle_polygon) == 0:
+            return False
+
+        a = np.asarray(a, dtype=float)
+        b = np.asarray(b, dtype=float)
+
+        # 실제 polygon 내부면 endpoint 완화로도 허용하지 않는다.
+        if point_in_polygon(a, obstacle_polygon) or point_in_polygon(b, obstacle_polygon):
+            return True
+
+        seg_len = float(np.linalg.norm(b - a))
+        if seg_len < 1e-12:
+            return distance_point_to_polygon(a, obstacle_polygon) <= self.obstacle_margin
+
+        samples = max(10, int(seg_len / 0.0015))
+        endpoint_margin = self._endpoint_relax_margin()
+        endpoint_zone = self._endpoint_relax_zone()
+
+        for t in np.linspace(0.0, 1.0, samples):
+            p = a + t * (b - a)
+
+            margin = self.obstacle_margin
+            dist_from_start = float(t * seg_len)
+            dist_from_end = float((1.0 - t) * seg_len)
+
+            # path의 진짜 시작/끝 근처만 완화한다.
+            if allow_start_relax and dist_from_start <= endpoint_zone:
+                margin = min(margin, endpoint_margin)
+            if allow_end_relax and dist_from_end <= endpoint_zone:
+                margin = min(margin, endpoint_margin)
+
+            if distance_point_to_polygon(p, obstacle_polygon) <= margin:
+                return True
+
+        return False
+
     # [수정 추가] start/goal endpoint margin relaxation helper
     def _relax_endpoint_cell_if_margin_only(
         self,
@@ -142,11 +239,10 @@ class XYMotionPlanner:
             return False, 0.0
 
         dist = float(distance_point_to_polygon(point, obstacle_polygon))
-        eps = float(getattr(config, "ENDPOINT_MARGIN_RELAX_EPS", 1e-9))
+        min_endpoint_clearance = self._endpoint_relax_margin()
 
-        # 실제 물체 밖이고 경계에서 아주 조금이라도 떨어져 있으면
-        # margin band 때문에만 막힌 endpoint로 보고 허용한다.
-        if dist > eps:
+        # 기존 obstacle_margin에는 걸리지만 실제 푸셔 반경 수준 clearance는 확보된 endpoint만 살린다.
+        if dist >= min_endpoint_clearance:
             self.blocked_cells.discard(cell_ij)
             return True, dist
 
@@ -232,8 +328,18 @@ class XYMotionPlanner:
                 if not self._is_free(p, obstacle_polygon):
                     return False
 
-        for a, b in zip(pts[:-1], pts[1:]):
-            if segment_hits_polygon(a, b, obstacle_polygon, margin=self.obstacle_margin):
+        for seg_idx, (a, b) in enumerate(zip(pts[:-1], pts[1:])):
+            # path 전체의 시작/끝 endpoint 주변만 완화한다.
+            # L/U 중간 waypoint는 여전히 strict margin으로 검사한다.
+            allow_start_relax = (seg_idx == 0) and (not check_endpoints_free)
+            allow_end_relax = (seg_idx == len(pts) - 2) and (not check_endpoints_free)
+            if self._segment_hits_polygon_endpoint_relaxed(
+                a,
+                b,
+                obstacle_polygon,
+                allow_start_relax=allow_start_relax,
+                allow_end_relax=allow_end_relax,
+            ):
                 return False
 
         return True
@@ -527,22 +633,34 @@ class XYMotionPlanner:
         failure_reason = None
 
         # start / goal bounds 먼저 방어
+        # robot_xy(start)가 workspace 밖으로 아주 살짝 튄 경우만 clip해서 진행한다.
+        # goal은 approach_xy이므로 approach 거리를 망가뜨리지 않기 위해 clip하지 않는다.
         if not self._inside_bounds(start):
-            self.last_debug_info = self._make_base_debug_info(
-                start=start,
-                goal=goal,
-                direct_attempted=direct_attempted,
-                direct_ok=direct_ok,
-                lshape_attempted=lshape_attempted,
-                lshape_ok=lshape_ok,
-                ushape_attempted=ushape_attempted,
-                ushape_ok=ushape_ok,
-                astar_attempted=astar_attempted,
-                astar_ok=astar_ok,
-                failure_reason="start_out_of_bounds",
+            clipped_start = self._clip_start_to_workspace_if_near(start)
+            if clipped_start is None:
+                self.last_debug_info = self._make_base_debug_info(
+                    start=start,
+                    goal=goal,
+                    direct_attempted=direct_attempted,
+                    direct_ok=direct_ok,
+                    lshape_attempted=lshape_attempted,
+                    lshape_ok=lshape_ok,
+                    ushape_attempted=ushape_attempted,
+                    ushape_ok=ushape_ok,
+                    astar_attempted=astar_attempted,
+                    astar_ok=astar_ok,
+                    failure_reason="start_out_of_bounds",
+                )
+                self._print_last_debug_info()
+                return None
+
+            self._set_last_debug_info(
+                start_clipped_to_workspace=True,
+                original_start_xy=tuple(float(v) for v in start),
+                clipped_start_xy=tuple(float(v) for v in clipped_start),
             )
-            self._print_last_debug_info()
-            return None
+            start = clipped_start
+            original_start = start.copy()
 
         if not self._inside_bounds(goal):
             self.last_debug_info = self._make_base_debug_info(
@@ -676,7 +794,13 @@ class XYMotionPlanner:
         # 1) 직선 경로
         # -------------------------------------------------
         direct_attempted = True
-        if not segment_hits_polygon(start, goal, obstacle_polygon, margin=self.obstacle_margin):
+        if not self._segment_hits_polygon_endpoint_relaxed(
+            start,
+            goal,
+            obstacle_polygon,
+            allow_start_relax=True,
+            allow_end_relax=True,
+        ):
             direct_ok = True
             self._set_last_debug_info(
                 direct_attempted=direct_attempted,
@@ -1010,3 +1134,448 @@ class XYMotionPlanner:
                 "push_end": end_xy,
                 "retreat_xy": retreat_xy,
             }
+
+    def make_failsafe_motion(
+        self,
+        robot_xy,
+        start_xy,
+        end_xy,
+        n_hat,
+        obstacle_polygon,
+        retreat_distance=0.03,
+    ):
+        """
+        최후의 emergency push용 motion 생성.
+
+        원칙:
+        - 먼저 기존 attach_approach()를 그대로 시도한다.
+        - approach 거리(start + obstacle_margin*n_hat)는 절대 줄이거나 clip하지 않는다.
+        - push start/end/approach/retreat은 strict하게 workspace 내부여야 한다.
+        - robot_xy만 workspace 밖으로 아주 살짝 튄 경우 clip한다.
+        - 일반 path planning이 실패한 경우에만 robot_xy -> approach_xy 직선 경로를 마지막 보험으로 반환한다.
+        """
+        motion = self.attach_approach(
+            robot_xy,
+            start_xy,
+            end_xy,
+            n_hat,
+            obstacle_polygon,
+            retreat_distance=retreat_distance,
+        )
+        if motion is not None:
+            return motion
+
+        robot_xy = np.asarray(robot_xy, dtype=float)
+        start_xy = np.asarray(start_xy, dtype=float)
+        end_xy = np.asarray(end_xy, dtype=float)
+        n_hat = np.asarray(n_hat, dtype=float)
+
+        approach_xy = start_xy + self.obstacle_margin * 1.0 * n_hat
+        retreat_xy = end_xy + retreat_distance * n_hat
+
+        robot_xy_fixed = robot_xy
+        if not self._inside_bounds(robot_xy_fixed):
+            robot_xy_fixed = self._clip_start_to_workspace_if_near(robot_xy_fixed)
+            if robot_xy_fixed is None:
+                self._set_last_debug_info(failure_reason="failsafe_robot_out_of_bounds")
+                self._print_last_debug_info()
+                return None
+
+        # 후보 자체는 strict 유지. approach/retreat/end를 강제로 줄이지 않는다.
+        if not self._inside_bounds(start_xy):
+            self._set_last_debug_info(failure_reason="failsafe_push_start_out_of_bounds")
+            self._print_last_debug_info()
+            return None
+        if not self._inside_bounds(end_xy):
+            self._set_last_debug_info(failure_reason="failsafe_push_end_out_of_bounds")
+            self._print_last_debug_info()
+            return None
+        if not self._inside_bounds(approach_xy):
+            self._set_last_debug_info(failure_reason="failsafe_approach_out_of_bounds")
+            self._print_last_debug_info()
+            return None
+        if not self._inside_bounds(retreat_xy):
+            self._set_last_debug_info(failure_reason="failsafe_retreat_out_of_bounds")
+            self._print_last_debug_info()
+            return None
+
+        path = [np.asarray(robot_xy_fixed, dtype=float).copy(), approach_xy.copy()]
+
+        self.last_debug_info = self._make_base_debug_info(
+            start=path[0],
+            goal=approach_xy,
+            direct_attempted=True,
+            direct_ok=True,
+            lshape_attempted=False,
+            lshape_ok=False,
+            ushape_attempted=False,
+            ushape_ok=False,
+            astar_attempted=False,
+            astar_ok=False,
+            failure_reason=None,
+            selected_path_type="failsafe_direct",
+            start_grid=self._point_to_grid(path[0]),
+            goal_grid=self._point_to_grid(approach_xy),
+            start_blocked=False,
+            goal_blocked=False,
+        )
+        self._set_last_debug_info(
+            approach_xy=tuple(float(v) for v in approach_xy),
+            push_start=tuple(float(v) for v in start_xy),
+            push_end=tuple(float(v) for v in end_xy),
+            retreat_xy=tuple(float(v) for v in retreat_xy),
+            approach_waypoints=int(len(path)),
+            max_approach_waypoints=getattr(config, "MAX_APPROACH_WAYPOINTS", None),
+            emergency_failsafe_motion=True,
+        )
+        self._print_last_debug_info()
+
+        return {
+            "approach_path": path,
+            "approach_length": path_length(path),
+            "approach_xy": approach_xy,
+            "push_start": start_xy,
+            "push_end": end_xy,
+            "retreat_xy": retreat_xy,
+        }
+
+
+    def _find_force_recovery_escape_point(
+        self,
+        robot_xy,
+        obstacle_polygon,
+        preferred_dir=None,
+    ):
+        """
+        final_force 전용 복구 escape point.
+
+        목적:
+        - robot_xy가 물체 polygon 내부이거나 obstacle_margin 안쪽이면,
+          먼저 물체 바깥쪽 점으로 빠져나가는 waypoint를 만든다.
+        - 이 함수는 마지막 보험용이라, 내부에서 밖으로 나가는 선분이 polygon을 지난다고
+          바로 실패시키지 않는다. 실제로는 이 이동 자체가 물체를 살짝 긁고 빠져나오는 복구 동작이다.
+        - workspace 밖 robot_xy는 먼저 clip된 값이 들어온다고 가정한다.
+        """
+        obstacle_polygon = self._sanitize_obstacle_polygon(obstacle_polygon)
+        robot_xy = np.asarray(robot_xy, dtype=float)
+
+        if len(obstacle_polygon) < 3:
+            return robot_xy.copy(), False, "no_obstacle"
+
+        if not self._inside_bounds(robot_xy):
+            robot_xy = self._clip_start_to_workspace_if_near(robot_xy)
+            if robot_xy is None:
+                # final_force에서는 그래도 workspace 안쪽으로 강제 clip한다.
+                eps = float(getattr(config, "FAILSAFE_CLIP_EPS", 1e-4))
+                robot_xy = np.clip(
+                    np.asarray(robot_xy, dtype=float),
+                    self.workspace_min + eps,
+                    self.workspace_max - eps,
+                )
+
+        inside = bool(point_in_polygon(robot_xy, obstacle_polygon))
+        dist = float(distance_point_to_polygon(robot_xy, obstacle_polygon))
+        safe_extra = float(getattr(config, "START_MARGIN_ESCAPE_SAFE_EXTRA", self.grid_resolution))
+        safe_clearance = float(self.obstacle_margin + safe_extra)
+
+        # 이미 충분히 밖이면 recovery 필요 없음.
+        if (not inside) and dist >= safe_clearance:
+            return robot_xy.copy(), False, "already_safe"
+
+        obs = np.asarray(obstacle_polygon, dtype=float)
+        obs_center = np.mean(obs, axis=0)
+
+        dirs = []
+
+        # 1순위: 물체 중심에서 robot으로 향하는 방향 = 바깥쪽 탈출 방향.
+        away = robot_xy - obs_center
+        away_norm = float(np.linalg.norm(away))
+        if away_norm > 1e-9:
+            dirs.append(away / away_norm)
+
+        # 2순위: preferred_dir. 보통 push normal 또는 goal 쪽으로 넣을 수 있음.
+        if preferred_dir is not None:
+            d = np.asarray(preferred_dir, dtype=float)
+            dn = float(np.linalg.norm(d))
+            if dn > 1e-9:
+                dirs.append(d / dn)
+                dirs.append(-d / dn)
+
+        # 3순위: 가장 가까운 polygon edge의 바깥 방향 근사.
+        # 점이 중심과 거의 같아서 away가 애매한 경우를 보완한다.
+        best_mid = None
+        best_dist = float("inf")
+        n = len(obs)
+        for i in range(n):
+            a = obs[i]
+            b = obs[(i + 1) % n]
+            ab = b - a
+            denom = float(np.dot(ab, ab))
+            if denom < 1e-12:
+                continue
+            t = float(np.clip(np.dot(robot_xy - a, ab) / denom, 0.0, 1.0))
+            proj = a + t * ab
+            dd = float(np.linalg.norm(robot_xy - proj))
+            if dd < best_dist:
+                best_dist = dd
+                best_mid = proj
+        if best_mid is not None:
+            d = robot_xy - best_mid
+            dn = float(np.linalg.norm(d))
+            if dn > 1e-9:
+                dirs.append(d / dn)
+            else:
+                d = best_mid - obs_center
+                dn = float(np.linalg.norm(d))
+                if dn > 1e-9:
+                    dirs.append(d / dn)
+
+        # 4순위: 전방향 샘플링.
+        n_dirs = int(getattr(config, "START_MARGIN_ESCAPE_DIRS", 32))
+        for k in range(max(8, n_dirs)):
+            th = 2.0 * np.pi * k / max(8, n_dirs)
+            dirs.append(np.array([np.cos(th), np.sin(th)], dtype=float))
+
+        # 중복 방향 제거.
+        unique_dirs = []
+        for d in dirs:
+            dn = float(np.linalg.norm(d))
+            if dn < 1e-9:
+                continue
+            d = d / dn
+            if all(abs(float(np.dot(d, u))) < 0.995 for u in unique_dirs):
+                unique_dirs.append(d)
+
+        eps = float(getattr(config, "FAILSAFE_CLIP_EPS", 1e-4))
+        ws_min = self.workspace_min + eps
+        ws_max = self.workspace_max - eps
+
+        max_radius = float(getattr(
+            config,
+            "FORCE_RECOVERY_ESCAPE_MAX_DIST",
+            max(0.08, 2.5 * self.obstacle_margin + 6.0 * self.grid_resolution),
+        ))
+        step = max(float(self.grid_resolution), 1e-6)
+        radii = np.arange(step, max_radius + 0.5 * step, step)
+
+        best = None
+        best_score = float("inf")
+        best_reason = "not_found"
+
+        for r in radii:
+            for d in unique_dirs:
+                q = robot_xy + r * d
+                q = np.clip(q, ws_min, ws_max)
+
+                if not self._inside_bounds(q):
+                    continue
+                if point_in_polygon(q, obstacle_polygon):
+                    continue
+
+                q_dist = float(distance_point_to_polygon(q, obstacle_polygon))
+                if q_dist < max(self.grid_resolution, 0.25 * safe_clearance):
+                    continue
+
+                # final_force용이라 margin을 완전히 만족하지 않아도 후보로 둔다.
+                # 대신 더 멀고 안전한 점일수록 우대한다.
+                score = float(np.linalg.norm(q - robot_xy)) - 0.1 * q_dist
+                if q_dist >= safe_clearance:
+                    score -= 0.5
+
+                if score < best_score:
+                    best_score = score
+                    best = q.copy()
+                    best_reason = "inside_escape" if inside else "margin_escape"
+
+            if best is not None:
+                return best, True, best_reason
+
+        # 정말 못 찾으면 workspace 안쪽으로 preferred 방향을 따라 조금이라도 이동한다.
+        # 이 경우에도 executor가 움직이며 상태를 바꿀 수 있게 한다.
+        if unique_dirs:
+            q = np.clip(robot_xy + min(max_radius, 3.0 * step) * unique_dirs[0], ws_min, ws_max)
+            return q.copy(), True, "forced_small_escape"
+
+        return robot_xy.copy(), False, "escape_failed"
+
+    def make_force_push_motion(
+        self,
+        robot_xy,
+        start_xy,
+        end_xy,
+        n_hat,
+        obstacle_polygon,
+        retreat_distance=0.03,
+    ):
+        """
+        대회용 진짜 마지막 force push motion.
+
+        사용 위치:
+        - normal planner 실패
+        - safe emergency 실패
+        - 그 다음 마지막으로 호출
+
+        원칙:
+        - 먼저 기존 safe failsafe motion을 한 번 더 시도한다.
+        - 그래도 실패하면 start/end/approach를 workspace 안으로 clip해서라도 motion을 만든다.
+        - approach 거리는 원래 값을 최대한 유지하되, workspace 밖이면 최후에만 clip한다.
+        - retreat이 workspace 밖이면 설정에 따라 생략한다.
+        - 경로계획이 실패하면 설정에 따라 robot_xy -> approach_xy 직선 경로를 사용한다.
+        """
+        # safe version이 되면 그걸 우선 사용한다.
+        motion = self.make_failsafe_motion(
+            robot_xy,
+            start_xy,
+            end_xy,
+            n_hat,
+            obstacle_polygon,
+            retreat_distance=retreat_distance,
+        )
+        if motion is not None:
+            motion["final_force_used_safe_motion"] = True
+            return motion
+
+        robot_xy = np.asarray(robot_xy, dtype=float)
+        start_xy = np.asarray(start_xy, dtype=float)
+        end_xy = np.asarray(end_xy, dtype=float)
+        n_hat = np.asarray(n_hat, dtype=float)
+
+        n_norm = float(np.linalg.norm(n_hat))
+        if n_norm < 1e-12:
+            n_hat = np.array([1.0, 0.0], dtype=float)
+        else:
+            n_hat = n_hat / n_norm
+
+        eps = float(getattr(config, "FAILSAFE_CLIP_EPS", 1e-4))
+        ws_min = self.workspace_min + eps
+        ws_max = self.workspace_max - eps
+
+        def _clip(p):
+            return np.clip(np.asarray(p, dtype=float), ws_min, ws_max)
+
+        # 로봇 명령 좌표는 workspace 안이어야 하므로 최후에는 clip.
+        robot_xy_fixed = _clip(robot_xy)
+        start_fixed = _clip(start_xy)
+
+        # end는 원래 1cm push 방향을 유지하려고 start_fixed 기준으로 다시 만들고 clip.
+        desired_push_vec = np.asarray(end_xy, dtype=float) - np.asarray(start_xy, dtype=float)
+        desired_len = float(np.linalg.norm(desired_push_vec))
+        if desired_len < 1e-9:
+            desired_len = float(getattr(config, "FINAL_FORCE_STROKE_LEN", 0.010 / float(config.REAL_WORKSPACE_SIZE_X)))
+            desired_end = start_fixed - desired_len * n_hat
+        else:
+            desired_end = start_fixed + desired_push_vec
+        end_fixed = _clip(desired_end)
+
+        # clip 때문에 너무 짧아졌으면 가능한 한 n_hat 방향으로 다시 1cm를 시도 후 clip.
+        push_len = float(np.linalg.norm(end_fixed - start_fixed))
+        min_push_len = 0.25 * float(getattr(config, "FINAL_FORCE_STROKE_LEN", 0.010 / float(config.REAL_WORKSPACE_SIZE_X)))
+        if push_len < min_push_len:
+            end_fixed = _clip(start_fixed - float(getattr(config, "FINAL_FORCE_STROKE_LEN", 0.010 / float(config.REAL_WORKSPACE_SIZE_X))) * n_hat)
+            push_len = float(np.linalg.norm(end_fixed - start_fixed))
+
+        if push_len < 1e-6:
+            self._set_last_debug_info(failure_reason="force_push_zero_length")
+            self._print_last_debug_info()
+            return None
+
+        # approach는 원래 거리 유지가 원칙. 단, 최후 force에서만 workspace 밖이면 clip.
+        approach_raw = start_fixed + self.obstacle_margin * 1.0 * n_hat
+        approach_xy = _clip(approach_raw)
+
+        # retreat은 가능하면 사용하되, workspace 밖이면 생략 또는 clip.
+        retreat_raw = end_fixed + retreat_distance * n_hat
+        retreat_xy = retreat_raw.copy()
+        retreat_inside = self._inside_bounds(retreat_xy)
+        if not retreat_inside:
+            if bool(getattr(config, "FINAL_FORCE_ALLOW_RETREAT_SKIP", True)):
+                retreat_xy = None
+            else:
+                retreat_xy = _clip(retreat_xy)
+
+        # -------------------------------------------------
+        # final_force recovery escape
+        # -------------------------------------------------
+        # robot_xy가 물체 내부이거나 obstacle_margin 안쪽이면,
+        # 바로 approach로 가기 전에 바깥쪽 escape waypoint를 하나 찍는다.
+        # 이 이동 자체가 물체를 살짝 긁고 빠져나오는 복구 동작이다.
+        recovery_xy, recovery_used, recovery_reason = self._find_force_recovery_escape_point(
+            robot_xy_fixed,
+            obstacle_polygon,
+            preferred_dir=n_hat,
+        )
+        recovery_xy = np.asarray(recovery_xy, dtype=float)
+
+        path_start = recovery_xy.copy() if recovery_used else robot_xy_fixed.copy()
+
+        # 일반 path planning을 한 번 시도한다. 실패하면 직선 경로라도 사용.
+        # recovery가 있으면 robot_xy -> recovery -> approach 순서가 되도록 앞에 붙인다.
+        path = self.plan_path(path_start, approach_xy, obstacle_polygon)
+        path_type = "force_push_planned"
+        if path is not None and recovery_used:
+            # plan_path는 recovery_xy에서 시작하므로 현재 robot_xy를 맨 앞에 추가한다.
+            if np.linalg.norm(np.asarray(path[0], dtype=float) - robot_xy_fixed) > 1e-9:
+                path = [robot_xy_fixed.copy()] + list(path)
+            path_type = "force_push_recovery_planned"
+
+        if path is None:
+            if not bool(getattr(config, "FINAL_FORCE_DIRECT_PATH_IF_NO_PATH", True)):
+                self._set_last_debug_info(failure_reason="force_push_no_approach_path")
+                self._print_last_debug_info()
+                return None
+
+            if recovery_used and np.linalg.norm(recovery_xy - robot_xy_fixed) > 1e-9:
+                path = [robot_xy_fixed.copy(), recovery_xy.copy(), approach_xy.copy()]
+                path_type = "force_push_recovery_direct"
+            else:
+                path = [robot_xy_fixed.copy(), approach_xy.copy()]
+                path_type = "force_push_direct"
+
+        self.last_debug_info = self._make_base_debug_info(
+            start=path[0],
+            goal=approach_xy,
+            direct_attempted=True,
+            direct_ok=True,
+            lshape_attempted=False,
+            lshape_ok=False,
+            ushape_attempted=False,
+            ushape_ok=False,
+            astar_attempted=False,
+            astar_ok=False,
+            failure_reason=None,
+            selected_path_type=path_type,
+            start_grid=self._point_to_grid(path[0]),
+            goal_grid=self._point_to_grid(approach_xy),
+            start_blocked=False,
+            goal_blocked=False,
+        )
+        self._set_last_debug_info(
+            approach_xy=tuple(float(v) for v in approach_xy),
+            push_start=tuple(float(v) for v in start_fixed),
+            push_end=tuple(float(v) for v in end_fixed),
+            retreat_xy=None if retreat_xy is None else tuple(float(v) for v in retreat_xy),
+            approach_waypoints=int(len(path)),
+            final_force_push=True,
+            approach_clipped=bool(np.linalg.norm(approach_xy - approach_raw) > 1e-9),
+            start_clipped=bool(np.linalg.norm(start_fixed - start_xy) > 1e-9),
+            end_clipped=bool(np.linalg.norm(end_fixed - desired_end) > 1e-9),
+            retreat_skipped=bool(retreat_xy is None),
+            recovery_escape_used=bool(recovery_used),
+            recovery_escape_reason=str(recovery_reason),
+            recovery_escape_xy=tuple(float(v) for v in recovery_xy),
+        )
+        self._print_last_debug_info()
+
+        return {
+            "approach_path": path,
+            "approach_length": path_length(path),
+            "approach_xy": approach_xy,
+            "push_start": start_fixed,
+            "push_end": end_fixed,
+            "retreat_xy": retreat_xy,
+            "final_force_push": True,
+            "recovery_escape_used": bool(recovery_used),
+            "recovery_escape_reason": str(recovery_reason),
+            "recovery_escape_xy": recovery_xy,
+        }
+

@@ -67,7 +67,7 @@ DIRECT_RUN_CONFIG = dict(
     seed=42,
 
     # 생성할 물체 종류
-    shape_types="T_BASE,WEIGHTED_SQUARE,WEIGHTED_CIRCLE",
+    shape_types="t,square,circle",
 
     # pose 하나에서 너무 많은 candidate를 저장하지 않도록 제한
     # 크게 하면 데이터 다양성은 늘지만 생성 시간이 증가
@@ -78,7 +78,7 @@ DIRECT_RUN_CONFIG = dict(
 )
 
 
-SHAPE_TYPES = ("T_BASE", "WEIGHTED_SQUARE", "WEIGHTED_CIRCLE")
+SHAPE_TYPES = ("t", "square", "circle")
 
 
 # ============================================================
@@ -136,7 +136,7 @@ def wrap_angle(rad: float) -> float:
 
 
 def pose_to_polygon(shape_type: str, pose: List[float]):
-    if shape_type == "WEIGHTED_CIRCLE":
+    if shape_type == "circle":
         return None
     return np.asarray(
         get_global_corners(pose, config.get_shape_corners(shape_type)),
@@ -148,7 +148,7 @@ def pose_inside_workspace(shape_type: str, pose: List[float], margin: float = 0.
     ws_min = np.asarray(config.WORKSPACE_MIN, dtype=float) + margin
     ws_max = np.asarray(config.WORKSPACE_MAX, dtype=float) - margin
 
-    if shape_type == "WEIGHTED_CIRCLE":
+    if shape_type == "circle":
         radius = float(config.get_shape_radius(shape_type) or 0.0)
         p = np.asarray(pose[:2], dtype=float)
         return bool(np.all(p - radius >= ws_min) and np.all(p + radius <= ws_max))
@@ -248,7 +248,7 @@ def main() -> None:
             local_corners = config.get_shape_corners(shape_type)
             radius = config.get_shape_radius(shape_type)
 
-            if shape_type == "WEIGHTED_CIRCLE":
+            if shape_type == "circle":
                 shape_info = np.asarray(current_pose[:2], dtype=float)
             else:
                 shape_info = np.asarray(
@@ -261,7 +261,7 @@ def main() -> None:
                 config.DIRECT_MIN_STROKE_LEN,
             )
 
-            if shape_type == "T_BASE":
+            if shape_type == "t":
                 base_stroke *= config.T_BASE_STROKE_SCALE
 
             face_candidates = brain.generate_face_candidates(

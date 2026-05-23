@@ -12,7 +12,7 @@ T_BASE_STROKE_SCALE = 1.0
 
 T_ALLOWED_STROKES_FAR = [1.75, 1.9]
 T_ALLOWED_STROKES_MID = [0.65, 0.95 ]
-T_ALLOWED_STROKES_NEAR = [0.28, 0.55]
+T_ALLOWED_STROKES_NEAR = [0.25, 0.55]
 
 # 원/네모도 T자처럼 config에서 stroke 배율을 조절
 # 이 값들은 절대 길이가 아니라 base_stroke에 곱해지는 배율임.
@@ -93,7 +93,7 @@ DIRECT_MIN_STROKE_LEN = 0.15 * PUSHER_RADIUS
 # 1. Base settings (기본 설정)
 # =========================================================
 # 한 미션당 허용되는 최대 시간(초)
-TIME_LIMIT_SEC = 120.0 
+TIME_LIMIT_SEC = 180.0 
 # 물리 엔진(total_.py)에서 적분할 때 쓰는 미소 시간 간격 (60FPS 기준)
 DT = 1.0 / 60.0 
 
@@ -113,7 +113,7 @@ SHAPE_ALIGN_SUCCESS_THRES = 0.005 / REAL_WORKSPACE_SIZE_X # 모양의 오차가 
 # 2. Physics model (물리 모델 상수)
 # =========================================================
 # total_.py 물리 엔진에서 씁니다. 로봇이 물체를 밀 때의 가상 스프링 강성(밀어내는 힘의 세기)
-K_SPRING = 25
+K_SPRING = 28
 # 바닥과 물체 사이의 동마찰계수 (물체가 바닥에서 얼마나 잘 미끄러지는가)
 MU_G = 0.6
 # 물체 간, 혹은 로봇과 물체 사이의 마찰계수 (현재 코드에선 안 쓰이나 예비용)
@@ -122,27 +122,6 @@ MU_G = 0.6
 # 3. Shape DB (물체 정보 데이터베이스)
 # =========================================================
 SHAPE_DB = {
-    '''
-    "square": { # 한쪽으로 무게가 쏠린 정사각형 블록
-        "eff_r": 1.5*0.01148, # 유효 반경(회전 마찰력을 계산할 때 쓰는 바닥 면적의 등가 반지름)
-        "cases": { # 가능한 무게중심 가설(Case)들
-            # CASE_0: 무게가 정확히 정중앙에 있는 이상적인 상태 (질량 m, 관성모멘트 I, 무게중심 com 좌표)
-            "CASE_0": {"m": 0.0092, "I": 0.00000133, "com": np.array([0.0, 0.0])},
-            # CASE_1_A: 무게추(너트)가 왼쪽(-x 방향)으로 약간 쏠린 상태
-            "CASE_1_A": {"m": 0.0096, "I": 0.00000137, "com": np.array([-0.000375, 0.0])},
-            # CASE_1_B: 무게추가 왼쪽 위(대각선)로 쏠린 상태
-            "CASE_1_B": {"m": 0.0096, "I": 0.00000137, "com": np.array([-0.000291, 0.000291])},
-            # CASE_1_C: 무게추가 왼쪽 아래로 쏠린 상태
-            "CASE_1_C": {"m": 0.0096, "I": 0.00000137, "com": np.array([-0.000291, -0.000291])},
-            # CASE_2, 3 시리즈: 무게추가 2개, 3개씩 달려서 무게중심이 더 극단적으로 변한 상태들
-            "CASE_2_AB": {"m": 0.0100, "I": 0.00000141, "com": np.array([-0.000640, 0.000280])},
-            "CASE_2_AC": {"m": 0.0100, "I": 0.00000141, "com": np.array([-0.000640, -0.000280])},
-            "CASE_2_BC": {"m": 0.0100, "I": 0.00000141, "com": np.array([-0.000560, 0.0])},
-            "CASE_3_ALL": {"m": 0.0104, "I": 0.00000145, "com": np.array([-0.000885, 0.0])},
-        },
-    },
-    '''
-    
     "square": { # 한쪽으로 무게가 쏠린 정사각형 블록
         "eff_r": 1.5*0.01148, # 유효 반경(회전 마찰력을 계산할 때 쓰는 바닥 면적의 등가 반지름)
         "cases": { # 가능한 무게중심 가설(Case)들
@@ -175,9 +154,9 @@ SHAPE_DB = {
         },
     },
     "t": { # T자형 블록 (얘는 대회 규정상 무게추가 안 붙어서 CASE_0 하나만 존재)
-        "eff_r": 8*0.01100,
+        "eff_r": 1.5*0.01100,
         "cases": {
-            "CASE_0": {"m": 0.00833, "I": 0.00000233, "com": np.array([0.00265, 0.0])}
+            "CASE_0": {"m": 0.00833, "I": 0.00000233, "com": np.array([0.00252, 0.0])}#0.00265
         },
     },
 }
@@ -223,6 +202,47 @@ PATH_GRID_RES = 0.002 / REAL_WORKSPACE_SIZE_X
 # A*를 쓰는 motion_planner.py에서 len(approach_path)가 이 값을 넘으면 해당 후보를 버린다.
 MAX_APPROACH_WAYPOINTS = 5
 APPROACH_WAYPOINT_LIMIT_SEQUENCE = [5, 7, 9, 12]
+
+# =========================================================
+# Competition fail-safe settings
+# =========================================================
+# 일반 후보/approach/waypoint 제한은 기존처럼 유지하고,
+# get_best_plan()이 끝까지 None이 될 때만 마지막 보험으로 1cm normal push를 만든다.
+COMPETITION_FAILSAFE_ENABLE = True
+
+# emergency push 길이: 실제 1cm. normalized = 0.010m / 0.15m = 0.0667
+EMERGENCY_STROKE_LEN = 0.010 / REAL_WORKSPACE_SIZE_X
+
+# robot_xy가 workspace 밖으로 아주 살짝 튄 경우만 보정한다.
+# 0.01 normalized = 1.5mm. 이번 로그의 -0.0002857은 약 0.043mm라서 보정 대상.
+FAILSAFE_WORKSPACE_TOL = 0.01
+
+# clip 후 경계선에 딱 붙이지 않고 아주 조금 안쪽으로 넣는다.
+FAILSAFE_CLIP_EPS = 1e-4
+
+
+# =========================================================
+# Final force push settings
+# =========================================================
+# Safe emergency까지 실패했을 때만 쓰는 최후의 밀기.
+# 일반 planner/일반 emergency에는 영향 없음.
+FINAL_FORCE_PUSH_ENABLE = True
+
+# 최후 밀기도 실제 1cm 기준. normalized = 0.010m / 0.15m
+FINAL_FORCE_STROKE_LEN = 0.010 / REAL_WORKSPACE_SIZE_X
+
+# final force 후보를 너무 많이 시도하면 느려지므로 상위 후보만 사용.
+FINAL_FORCE_MAX_CANDIDATES = 32
+
+# final force에서는 approach/start/end가 workspace 밖으로 살짝 벗어나면 clip해서라도 실행.
+FINAL_FORCE_ALLOW_CLIP = True
+
+# final force에서 retreat이 workspace 밖이면 후퇴 동작을 생략한다.
+FINAL_FORCE_ALLOW_RETREAT_SKIP = True
+
+# final force에서 일반 path planning이 실패하면 robot_xy -> approach_xy 직선 접근이라도 사용.
+FINAL_FORCE_DIRECT_PATH_IF_NO_PATH = True
+
 # =========================================================
 # U-shape path planning
 # =========================================================
@@ -347,10 +367,68 @@ DEBUG_BRAIN_TOP_CANDIDATES = False # 최종 후보 Top 3 상세 정보 보여줄
 DEBUG_RELAX_CUTOFF = False 
 VERBOSE_DEBUG = False # 찐막 전체 로깅
 
+
+# =========================================================
+# Shape name normalization
+# =========================================================
+def normalize_shape_type(shape_type, unknown_default="unknown"):
+    """
+    서버/기존 코드에서 shape 이름이 다르게 들어와도 내부 표준 이름으로 맞춘다.
+
+    반환 표준값:
+        "square", "circle", "t", 또는 unknown_default
+    """
+    if shape_type is None:
+        return unknown_default
+
+    try:
+        s = str(shape_type).strip().lower()
+    except Exception:
+        return unknown_default
+
+    if s == "":
+        return unknown_default
+
+    s = s.replace("-", "_").replace(" ", "_")
+
+    aliases = {
+        "square": "square",
+        "s": "square",
+        "weighted_square": "square",
+        "weight_square": "square",
+        "box": "square",
+        "rect": "square",
+        "rectangle": "square",
+
+        "circle": "circle",
+        "c": "circle",
+        "weighted_circle": "circle",
+        "weight_circle": "circle",
+        "round": "circle",
+        "disk": "circle",
+        "disc": "circle",
+
+        "t": "t",
+        "t_base": "t",
+        "tbase": "t",
+        "t_shape": "t",
+        "tshape": "t",
+        "tee": "t",
+    }
+
+    if s in aliases:
+        return aliases[s]
+
+    if s in ("unknown", "none", "null", "surprise", "surprise_shape", "other"):
+        return unknown_default
+
+    return unknown_default
+
 # =========================================================
 # 헬퍼 함수 1: 물체 모양별 로컬(Local) 꼭짓점 좌표 반환
 # =========================================================
 def get_shape_corners(shape_type):
+    shape_type = normalize_shape_type(shape_type, unknown_default=shape_type)
     # s = 중심에서 꼭짓점까지의 거리(15mm를 정규화한 값)
     s = 0.015 / REAL_WORKSPACE_SIZE_X
     
@@ -384,6 +462,7 @@ def get_shape_corners(shape_type):
 # 헬퍼 함수 2: 원형 물체의 반지름 반환
 # =========================================================
 def get_shape_radius(shape_type):
+    shape_type = normalize_shape_type(shape_type, unknown_default=shape_type)
     if shape_type == "circle":
         # 원의 실제 반지름 1.5cm를 정규화해서 반환
         return CIRCLE_SCALE * (0.015 / REAL_WORKSPACE_SIZE_X)

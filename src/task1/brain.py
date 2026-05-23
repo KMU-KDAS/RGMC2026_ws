@@ -1203,6 +1203,330 @@ class PushingBrain:
             "exhaustive_attach_used": exhaustive_attach_used,
         }
 
+
+    def _make_emergency_plan(
+        self,
+        shape_type,
+        current_pose,
+        target_pose,
+        local_corners,
+        radius,
+        robot_pose,
+        candidate_data,
+        current_local_err,
+        local_target,
+    ):
+        """
+        대회용 마지막 보험.
+
+        순서:
+        1) 기존 후보/현재 polygon에서 emergency 후보를 만든다.
+        2) 각 후보를 1cm normal push로 바꿔 물리 예측 next_pose를 계산한다.
+        3) 예측 이동 방향이 target 방향에 가장 가까운 후보부터 safe emergency motion을 시도한다.
+        4) safe emergency도 전부 실패하면 final force push motion을 시도한다.
+        """
+        if not bool(getattr(config, "COMPETITION_FAILSAFE_ENABLE", True)):
+            return None
+
+        robot_xy = np.asarray(
+            robot_pose[:2] if robot_pose is not None else config.ROBOT_START_XY,
+            dtype=float,
+        )
+        obstacle_polygon = candidate_data.get("obstacle_polygon")
+        if obstacle_polygon is None or len(obstacle_polygon) < 3:
+            try:
+                obstacle_polygon = self._shape_polygon(shape_type, current_pose, local_corners, radius)
+                obstacle_polygon = self._clip_polygon_to_workspace(obstacle_polygon)
+            except Exception:
+                obstacle_polygon = None
+
+        if obstacle_polygon is None or len(obstacle_polygon) < 3:
+            return None
+
+        retreat_distance = (
+            config.T_RETREAT_DISTANCE
+            if shape_type == "t"
+            else config.RETREAT_DISTANCE
+        )
+        emergency_stroke = float(getattr(
+            config,
+            "EMERGENCY_STROKE_LEN",
+            0.010 / float(config.REAL_WORKSPACE_SIZE_X),
+        ))
+
+        # -------------------------------------------------
+        # 1) 후보 seed 모으기
+        # -------------------------------------------------
+        candidate_seed_items = []
+        seen = set()
+
+        def _cand_key(c):
+            try:
+                return int(c.get("index", id(c)))
+            except Exception:
+                return id(c)
+
+        for item in candidate_data.get("scored_candidate_actions", []) or []:
+            cand = item.get("candidate") if isinstance(item, dict) else None
+            if cand is None:
+                continue
+            k = _cand_key(cand)
+            if k in seen:
+                continue
+            seen.add(k)
+            candidate_seed_items.append((cand, item))
+
+        for cand in candidate_data.get("candidate_actions", []) or []:
+            if cand is None:
+                continue
+            k = _cand_key(cand)
+            if k in seen:
+                continue
+            seen.add(k)
+            candidate_seed_items.append((cand, None))
+
+        # 후보가 아예 없으면 현재 polygon에서 목표 방향에 가장 맞는 face를 직접 만든다.
+        if not candidate_seed_items:
+            polygon = candidate_data.get("shape_info", candidate_data.get("full_shape_polygon"))
+            if polygon is None:
+                polygon = obstacle_polygon
+            polygon = np.asarray(polygon, dtype=float)
+            goal_vec_xy = np.asarray(target_pose[:2], dtype=float) - np.asarray(current_pose[:2], dtype=float)
+            goal_norm = float(np.linalg.norm(goal_vec_xy))
+            goal_dir = goal_vec_xy / goal_norm if goal_norm > 1e-9 else np.array([1.0, 0.0], dtype=float)
+
+            face_seeds = []
+            for seg in self._visible_polygon_face_segments(polygon):
+                p1 = np.asarray(seg["p1"], dtype=float)
+                p2 = np.asarray(seg["p2"], dtype=float)
+                edge_vec = p2 - p1
+                if np.linalg.norm(edge_vec) < 1e-9:
+                    continue
+                n_hat = np.asarray(seg["n_hat"], dtype=float)
+                t_hat = np.asarray(seg["t_hat"], dtype=float)
+                face_score = float(np.dot(-n_hat, goal_dir))
+                for ratio in (0.5, 0.25, 0.75):
+                    surface = p1 + float(ratio) * edge_vec
+                    start = surface + config.PUSHER_RADIUS * n_hat
+                    cand = {
+                        "index": -100000 - len(face_seeds),
+                        "face_idx": int(seg.get("face_idx", -1)),
+                        "ratio": float(ratio),
+                        "start": start.copy(),
+                        "end": start - emergency_stroke * n_hat,
+                        "n_hat": n_hat.copy(),
+                        "t_hat": t_hat.copy(),
+                        "stroke_len": float(emergency_stroke),
+                        "action_type": "emergency_normal",
+                        "face_goal_score": float(face_score),
+                    }
+                    face_seeds.append((face_score, cand))
+
+            face_seeds.sort(key=lambda x: x[0], reverse=True)
+            candidate_seed_items = [(cand, None) for _, cand in face_seeds]
+
+        # -------------------------------------------------
+        # 2) 1cm emergency 후보를 만들고 예측 점수로 정렬
+        # -------------------------------------------------
+        ranked = []
+        goal_vec = self._goal_vector(shape_type, current_pose, target_pose)
+        goal_vec_xy = np.asarray(target_pose[:2], dtype=float) - np.asarray(current_pose[:2], dtype=float)
+        goal_xy_norm = float(np.linalg.norm(goal_vec_xy))
+        goal_dir_xy = goal_vec_xy / goal_xy_norm if goal_xy_norm > 1e-9 else np.array([1.0, 0.0], dtype=float)
+
+        max_candidates = int(getattr(config, "FINAL_FORCE_MAX_CANDIDATES", 32))
+        if max_candidates <= 0:
+            max_candidates = 32
+
+        for tried, (base_cand, source_item) in enumerate(candidate_seed_items, start=1):
+            if tried > max_candidates * 4:  # seed가 너무 많을 때 방어
+                break
+            try:
+                start = np.asarray(base_cand["start"], dtype=float)
+                n_hat = np.asarray(base_cand["n_hat"], dtype=float)
+                n_norm = float(np.linalg.norm(n_hat))
+                if n_norm < 1e-12:
+                    continue
+                n_hat = n_hat / n_norm
+                t_hat = np.asarray(base_cand.get("t_hat", np.array([-n_hat[1], n_hat[0]])), dtype=float)
+                end = start - emergency_stroke * n_hat
+
+                cand = {
+                    **base_cand,
+                    "index": int(base_cand.get("index", -100000 - tried)),
+                    "start": start.copy(),
+                    "end": end.copy(),
+                    "n_hat": n_hat.copy(),
+                    "t_hat": t_hat.copy(),
+                    "stroke_len": float(np.linalg.norm(end - start)),
+                    "action_type": "emergency_normal",
+                    "emergency_failsafe": True,
+                }
+            except Exception:
+                continue
+
+            next_pose = None
+            try:
+                # emergency stroke로 바뀐 후보를 기준으로 다시 예측한다.
+                if shape_type in config.SHAPE_DB:
+                    next_pose = self._simulate_case(
+                        shape_type,
+                        current_pose,
+                        cand,
+                        self.com_belief.get(shape_type, list(config.SHAPE_DB[shape_type]["cases"].keys())[0]),
+                    )
+            except Exception:
+                next_pose = None
+
+            if next_pose is None:
+                # 예측 실패 시에는 push 방향 자체가 목표 방향과 맞는지로 최소 점수 부여.
+                align = float(np.dot(-cand["n_hat"], goal_dir_xy))
+                progress = 0.0
+                next_shape_err = float(current_local_err)
+                next_pose_for_plan = list(current_pose)
+            else:
+                motion_vec = self._motion_vector(shape_type, current_pose, next_pose)
+                align = self._cosine_score(goal_vec, motion_vec)
+                try:
+                    next_shape_err = shape_alignment_error(
+                        shape_type,
+                        next_pose,
+                        local_target,
+                        local_corners,
+                        radius,
+                    )
+                    progress = float(current_local_err) - float(next_shape_err)
+                except Exception:
+                    next_shape_err = float(current_local_err)
+                    progress = 0.0
+                next_pose_for_plan = next_pose
+
+            # push normal 방향도 보조 점수로 반영한다.
+            push_dir_score = float(np.dot(-cand["n_hat"], goal_dir_xy))
+            score = 2.0 * float(align) + 1.0 * float(progress) + 0.25 * push_dir_score
+
+            ranked.append({
+                "candidate": cand,
+                "next_pose": next_pose_for_plan,
+                "next_shape_err": float(next_shape_err),
+                "progress": float(progress),
+                "align": float(align),
+                "push_dir_score": float(push_dir_score),
+                "score": float(score),
+            })
+
+        ranked.sort(key=lambda item: item["score"], reverse=True)
+
+        # -------------------------------------------------
+        # 3) safe emergency 먼저 시도
+        # -------------------------------------------------
+        for item in ranked[:max_candidates]:
+            cand = item["candidate"]
+
+            if not self._candidate_motion_is_in_workspace(
+                cand["start"],
+                cand["end"],
+                cand["n_hat"],
+                retreat_distance,
+            ):
+                continue
+
+            motion = self.motion_planner.make_failsafe_motion(
+                robot_xy,
+                cand["start"],
+                cand["end"],
+                cand["n_hat"],
+                obstacle_polygon,
+                retreat_distance=retreat_distance,
+            )
+            if motion is None:
+                continue
+
+            push_len = float(np.linalg.norm(cand["end"] - cand["start"]))
+            path_cost = float(motion.get("approach_length", 0.0)) + push_len
+
+            return {
+                "candidate": cand,
+                "motion": motion,
+                "next_pose": item["next_pose"],
+                "current_shape_err": float(current_local_err),
+                "next_shape_err": float(item["next_shape_err"]),
+                "score": float(item["score"]),
+                "path_cost": float(path_cost),
+                "progress": float(item["progress"]),
+                "align": float(item["align"]),
+                "eval_target": local_target,
+                "matched_idx": None,
+                "fixed_local_target": local_target,
+                "emergency_failsafe": True,
+                "emergency_ranked_by_prediction": True,
+                "push_dir_score": float(item["push_dir_score"]),
+            }
+
+        # -------------------------------------------------
+        # 4) final force push: safe emergency도 실패했을 때만
+        # -------------------------------------------------
+        if bool(getattr(config, "FINAL_FORCE_PUSH_ENABLE", True)):
+            for item in ranked[:max_candidates]:
+                cand = item["candidate"].copy()
+
+                motion = self.motion_planner.make_force_push_motion(
+                    robot_xy,
+                    cand["start"],
+                    cand["end"],
+                    cand["n_hat"],
+                    obstacle_polygon,
+                    retreat_distance=retreat_distance,
+                )
+                if motion is None:
+                    continue
+
+                # final force에서는 motion planner가 start/end를 clip했을 수 있으므로 candidate도 맞춰준다.
+                cand["start"] = np.asarray(motion.get("push_start", cand["start"]), dtype=float)
+                cand["end"] = np.asarray(motion.get("push_end", cand["end"]), dtype=float)
+                cand["stroke_len"] = float(np.linalg.norm(cand["end"] - cand["start"]))
+                cand["action_type"] = "final_force_normal"
+                cand["emergency_failsafe"] = True
+                cand["final_force_push"] = True
+
+                next_pose = item["next_pose"]
+                try:
+                    if shape_type in config.SHAPE_DB:
+                        next_pose = self._simulate_case(
+                            shape_type,
+                            current_pose,
+                            cand,
+                            self.com_belief.get(shape_type, list(config.SHAPE_DB[shape_type]["cases"].keys())[0]),
+                        )
+                except Exception:
+                    next_pose = item["next_pose"]
+
+                push_len = float(np.linalg.norm(cand["end"] - cand["start"]))
+                path_cost = float(motion.get("approach_length", 0.0)) + push_len
+
+                return {
+                    "candidate": cand,
+                    "motion": motion,
+                    "next_pose": next_pose,
+                    "current_shape_err": float(current_local_err),
+                    "next_shape_err": float(item["next_shape_err"]),
+                    "score": float(item["score"]),
+                    "path_cost": float(path_cost),
+                    "progress": float(item["progress"]),
+                    "align": float(item["align"]),
+                    "eval_target": local_target,
+                    "matched_idx": None,
+                    "fixed_local_target": local_target,
+                    "emergency_failsafe": True,
+                    "final_force_push": True,
+                    "emergency_ranked_by_prediction": True,
+                    "push_dir_score": float(item["push_dir_score"]),
+                }
+
+        if getattr(config, "DEBUG_BRAIN", False):
+            print("[BRAIN][FAILSAFE] emergency/final-force push could not be created")
+        return None
+
     def get_best_plan(
         self,
         shape_type,
@@ -1217,6 +1541,8 @@ class PushingBrain:
     ):
         with perf_timer("brain.get_best_plan"):
             _ = planner
+            if hasattr(config, "normalize_shape_type"):
+                shape_type = config.normalize_shape_type(shape_type, unknown_default=shape_type)
 
             min_progress_cutoff = self._min_progress_cutoff()
             negative_score_cutoff = self._negative_score_cutoff()
@@ -1347,7 +1673,7 @@ class PushingBrain:
                         )
                         if retry_plan is not None:
                             return retry_plan
-                        return None
+                        # retry까지 실패해도 바로 None으로 멈추지 않고 아래 emergency fallback을 시도한다.
 
                 self._report_plan_failure(failure_reason)
                 self._report_no_plan_context(
@@ -1356,6 +1682,21 @@ class PushingBrain:
                     chosen_lookahead,
                     local_target,
                 )
+
+                emergency_plan = self._make_emergency_plan(
+                    shape_type,
+                    current_pose,
+                    target_pose,
+                    local_corners,
+                    radius,
+                    robot_pose,
+                    candidate_data,
+                    current_local_err,
+                    local_target,
+                )
+                if emergency_plan is not None:
+                    return emergency_plan
+
                 return None
 
             self._last_plan_failure_reason = None
@@ -1992,11 +2333,18 @@ class PushingBrain:
         )
 
     def update_com_belief(self, real_delta_theta, shape_type, pre_push_pose, candidate):
+        if hasattr(config, "normalize_shape_type"):
+            shape_type = config.normalize_shape_type(shape_type, unknown_default=shape_type)
+
+        # unknown 또는 SHAPE_DB에 없는 이름은 COM belief 업데이트를 건너뛴다.
+        if shape_type not in config.SHAPE_DB:
+            return
+
         shape_data = config.SHAPE_DB[shape_type]
         if len(shape_data["cases"]) <= 1:
             return
 
-        best_candidate = self.com_belief[shape_type]
+        best_candidate = self.com_belief.get(shape_type, list(shape_data["cases"].keys())[0])
         min_error = float("inf")
 
         for cand_name in shape_data["cases"].keys():
@@ -2009,6 +2357,8 @@ class PushingBrain:
                 best_candidate = cand_name
 
         if min_error <= config.SYSID_ANGLE_DEADZONE:
+            if shape_type not in self.vote_box:
+                self.vote_box[shape_type] = {k: 0 for k in shape_data["cases"].keys()}
             self.vote_box[shape_type][best_candidate] += 1
 
             if self.vote_box[shape_type][best_candidate] >= config.SYSID_VOTE_THRESHOLD:

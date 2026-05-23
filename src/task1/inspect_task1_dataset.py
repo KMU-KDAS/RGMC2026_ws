@@ -45,7 +45,7 @@ USE_DIRECT_RUN = True
 
 DIRECT_RUN_CONFIG = dict(
     # physics 데이터 파일
-    physics=rr"src/task1/data/task1_physics_dynamics.jsonl",
+    physics=r"src/task1/data/task1_physics_dynamics.jsonl",
 
     # real 데이터 파일
     # "AUTO"로 두면 debug_task1_runtime/task1_learning_dataset 안에서

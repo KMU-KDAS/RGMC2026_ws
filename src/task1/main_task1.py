@@ -66,7 +66,7 @@ def run_task1():
     # IoU(성공 여부)를 계산해 줄 Planner 심판 객체 생성
     planner = Planner(config)
     # 오늘 우리가 다룰 물체의 종류를 '무게가 한쪽으로 쏠린 사각형'으로 고정 설정
-    shape_type = "WEIGHTED_SQUARE"
+    shape_type = "square"
     # 수많은 경우의 수를 계산해 최적의 찌르기 각도를 찾아낼 '두뇌' 객체 생성
     brain = PushingBrain()
 
@@ -103,7 +103,7 @@ def run_task1():
         cur_pose, tgt_pose = get_perception_data(robot)
 
         # 3. 목표 달성 여부(IoU)를 검사하기 위해 픽셀 마스크를 만듭니다.
-        if shape_type == "WEIGHTED_CIRCLE":
+        if shape_type == "circle":
             # 원형이면 중심점과 반지름으로 원 다각형 생성
             cur_poly = make_circle_polygon(cur_pose[:2], radius, config.CIRCLE_POLY_POINTS)
             tgt_poly = make_circle_polygon(tgt_pose[:2], radius, config.CIRCLE_POLY_POINTS)
