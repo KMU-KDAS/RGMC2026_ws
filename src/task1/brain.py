@@ -3,7 +3,7 @@ from typing import Dict, List
 import numpy as np
 
 from task1 import config
-from geometry_utils import (
+from push_geometry import (
     clip_polygon_to_aabb,
     clip_segment_to_aabb,
     distance_point_to_polygon,

@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Sequence, Tuple  # 타입 힌트용
 import numpy as np  # 벡터 및 행렬 연산 라이브러리
 
 from task1 import config  # 설정값 임포트
-from geometry_utils import (
+from push_geometry import (
     clip_polygon_to_aabb,
     distance_point_to_polygon,
     path_length,

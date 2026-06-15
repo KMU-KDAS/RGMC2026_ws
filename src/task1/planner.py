@@ -1,7 +1,7 @@
 import cv2 # 컴퓨터 비전(이미지 처리)을 위한 OpenCV 라이브러리. 여기선 다각형을 그리고 색칠하는 데 쓰입니다.
 import numpy as np # 행렬 및 벡터 계산을 위한 필수 라이브러리
 
-from geometry_utils import make_circle_polygon, wrap_angle # 수학/기하학 계산 헬퍼 함수들 임포트
+from push_geometry import make_circle_polygon, wrap_angle # 수학/기하학 계산 헬퍼 함수들 임포트
 
 
 class Planner:
