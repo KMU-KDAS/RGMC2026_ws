@@ -19,6 +19,10 @@ Check the links below for additional information:
 
 ## Task 1: Planar Pushing
 
+
+<img src="resources/task1.gif" alt="task1" width="800"/>
+
+
 For Task 1, our solution uses a closed-loop planar pushing strategy to move an object toward a target pose, including both position and orientation. Instead of executing a single large push, the system repeatedly observes the object state, generates multiple candidate pushing actions, predicts their effects with a one-step physics model, and selects the action that best moves the object along a reference path toward the target.
 
 Each push candidate is generated from the object boundary and evaluated using predicted translation, rotation, progress toward the target, and shape overlap with the goal pose. The system also checks whether the robot can safely reach the selected pushing start point before execution. Approach paths are tested from simple to complex: straight-line path, L-shaped path, U-shaped path, and finally A* search when necessary.
@@ -26,6 +30,10 @@ Each push candidate is generated from the object boundary and evaluated using pr
 The execution loop consists of approach, alignment, pushing, retreat, and re-observation. This allows the system to compensate for model error after each action and plan the next push from the updated object pose. Before running on the real robot, the overall pipeline was first validated in a physics-based simulation environment to test candidate generation, prediction, scoring, and path planning.
 
 ## Task 2: Linear Deformable Object Shape Control
+
+
+<img src="resources/task2.gif" alt="task2" width="800"/>
+
 
 For Task 2, our solution addresses linear deformable object shape control, where the goal is to manipulate a rope-like object so that its final shape matches a given target configuration. Unlike Task 1, this task is not a rigid-body pose-matching problem; the rope must be controlled as an ordered sequence of nodes, where both node positions and local tangent directions affect the final shape.
 
