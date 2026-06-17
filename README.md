@@ -4,7 +4,7 @@
 
 This repository contains our solution for the **IEEE ICRA 2026 Cloud Robotics Competition**, which is part of the **11th Robotic Grasping and Manipulation Competition (RGMC 2026)** at IEEE ICRA 2026.
 
-The competition uses **CloudGripper**, an open-source cloud robotics testbed, where teams develop manipulation algorithms through remote access to robotic arm cells. The 2026 Cloud Robotics track focuses on generalization and robustness across different robot cells, object properties, calibration differences, and unseen evaluation cases.
+The competition uses [**CloudGripper**](https://github.com/cloudgripper), an open-source cloud robotics testbed, where teams develop manipulation algorithms through remote access to robotic arm cells. The 2026 Cloud Robotics track focuses on generalization and robustness across different robot cells, object properties, calibration differences, and unseen evaluation cases.
 
 Our solution addresses the two competition tasks:
 
